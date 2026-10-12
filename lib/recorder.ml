@@ -171,6 +171,14 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
     raise_s [%message "no live feed" (venue : Market_data.Venue.t)]
 ;;
 
+(* Hyperliquid's [l2Book] frames feed both [L2] and [Bbo]; the client passes each one to
+   [on_raw] once, under [L2] when [L2] is requested. *)
+let has_raw_frames (entry : Config.Venue_entry.t) (stream : Market_data.Stream.t) =
+  match entry.venue, stream with
+  | Hyperliquid, Bbo -> not (List.mem entry.streams L2 ~equal:Market_data.Stream.equal)
+  | _ -> true
+;;
+
 let start (config : Config.t) =
   let data_dir = config.data_dir in
   let%bind () = Unix.mkdir ~p:() data_dir in
@@ -211,7 +219,8 @@ let start (config : Config.t) =
     Deferred.List.concat_map ~how:`Sequential config.venues ~f:(fun entry ->
       Deferred.List.map ~how:`Sequential entry.symbols ~f:(fun symbol ->
         let key stream = { Metrics.Key.venue = entry.venue; stream; symbol } in
-        List.iter entry.streams ~f:(fun stream -> Metrics.register metrics (key stream));
+        List.iter entry.streams ~f:(fun stream ->
+          Metrics.register ~raw:(has_raw_frames entry stream) metrics (key stream));
         let on_raw ~stream ~recv_ts frame =
           let key = key stream in
           let clamped = Metrics.clamp_recv_ts metrics key recv_ts in
