@@ -127,7 +127,8 @@ shutdown are uploaded by the next run. Normalized event logs are not uploaded.
   `(last_flush_error ((error "...No space left on device...") (age 5s)))`.
 - `GET /metrics`: Prometheus text format.
 - `GET /status`: a sexp of the open minute files, the pending uploads (both relative to
-  `data_dir`) and every stream's counters.
+  `data_dir`), every stream's counters and each venue client's frames, parse errors and
+  reconnects (`clients`).
 
 `market-recorder status -url URL` (default `http://localhost:9100`) fetches `/metrics`
 and prints it as one row per stream plus the process gauges:
@@ -139,6 +140,15 @@ bybit        trades   BTCUSDT      38   11144      70               0           
 hyperliquid  l2       BTC         182  270819     182               0                 0              0                   0.037
 ...
 
+client_frames{venue=hyperliquid}            920
+client_frames{venue=binance}                1435
+client_frames{venue=bybit}                  1963
+parse_errors{venue=hyperliquid}             0
+parse_errors{venue=binance}                 0
+parse_errors{venue=bybit}                   0
+reconnects{venue=hyperliquid}               0
+reconnects{venue=binance}                   0
+reconnects{venue=bybit}                     0
 uploads                                     0
 upload_failures                             0
 upload_pending                              0
@@ -160,6 +170,9 @@ gc_top_heap_words                           410953
 | `market_recorder_norm_pipe_length` | venue, stream, symbol | normalized events waiting for the event log writer |
 | `market_recorder_healthz_flaps_total` | venue, stream, symbol | times the stream went stale after being fresh (seen by `/healthz` or `/metrics` requests) |
 | `market_recorder_last_frame_age_seconds` | venue, stream, symbol | since the last frame (since start if none) |
+| `market_recorder_client_frames_total` | venue | websocket text frames the venue clients received, acks and heartbeats included, summed over the venue's feeds |
+| `market_recorder_parse_errors_total` | venue | frames the clients dropped as undecodable, plus error responses from the server |
+| `market_recorder_reconnects_total` | venue | successful reconnections (the first connection excluded) |
 | `market_recorder_uploads_total` | | files uploaded |
 | `market_recorder_upload_failures_total` | | failed command runs |
 | `market_recorder_upload_pending` | | files waiting |
@@ -169,9 +182,19 @@ gc_top_heap_words                           410953
 | `market_recorder_gc_minor_collections_total`, `_gc_major_collections_total`, `_gc_compactions_total` | | GC counters |
 | `market_recorder_gc_heap_words`, `_gc_top_heap_words` | | major heap size, current and peak |
 
-Parse errors and reconnects are handled inside the venue clients (logged, resubscribed)
-and are not visible through the `Market_data.Feed.t` interface, so they are not counted
-and reconnects do not produce disconnect lines; only shutdown does.
+The per-stream families count frames as passed to the raw writer; the per-venue client
+families come from each client's own `stats` (one reader per feed, summed per venue).
+The status endpoint carries the same client counters under `clients`. Hyperliquid
+`l2Book` frames feed both `l2` and `bbo` but are written once, under `l2` when it is
+recorded; `bbo` then only has the event columns (`-` in `market-recorder status`) and is
+left out of the health rule. Reconnects are counted but do not produce disconnect lines;
+only shutdown does.
+
+[`deploy/prometheus/alerts.yml`](deploy/prometheus/alerts.yml) is an example rule file:
+`MarketRecorderParseErrors` fires when a venue's parse error rate stays above zero for
+5 minutes (usually a venue changed its message format), `MarketRecorderReconnecting` on
+more than 3 reconnects in 15 minutes. CI checks it with `promtool check rules` and runs
+the unit test in `deploy/prometheus/alerts_test.yml` (`promtool test rules`).
 
 ## Tardis compatibility
 
@@ -193,8 +216,8 @@ to `/tmp/market-recorder-sims/remote`), queries `/healthz`, `/status` and `/metr
 (through `market-recorder status`), sends `SIGTERM`, lists the files and decompresses a
 few, then kills the simulators. It exits 1, listing every `PROBLEM`, when `/healthz` is
 not 200 or reports a raw writer failure, a stream received no frame, an upload failed or
-is still pending, the recorder exits non-zero, or a stream lacks a compressed minute, its
-uploaded copy or its event log. Run it from this repo inside the multi-repo dune
+is still pending, a venue client counted parse errors, the recorder exits non-zero, or a
+stream lacks a compressed minute, its uploaded copy or its event log. Run it from this repo inside the multi-repo dune
 workspace, or point `WORKSPACE` at another workspace root holding the simulators:
 
 ```
