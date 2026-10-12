@@ -5,6 +5,7 @@
   core_unix
   async
   uri
+  zstd
   market-recorder
   market-data
   hl-client
