@@ -104,7 +104,7 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
         ~symbols
         ~streams
     in
-    ( Market_data.Feed.With_gaps.of_feed (Okx_feed.Live_feed.feed t)
+    ( Okx_feed.Live_feed.feed_with_gaps t
     , fun () ->
         let { Okx_feed.Live_feed.Stats.frames; parse_errors; reconnects } =
           Okx_feed.Live_feed.stats t
