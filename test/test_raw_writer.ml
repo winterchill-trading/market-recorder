@@ -59,6 +59,8 @@ let%expect_test "minute roll compresses the previous file" =
   [%expect {| raw/bybit/trades/BTCUSDT/2026/10/12/09-15.ndjson |}];
   write "2026-10-12T09:16:00.000001Z" "next";
   let%bind () = Raw_writer.roll t in
+  (* the 09-16 file is opened in a thread; [flush] waits for it *)
+  let%bind () = Raw_writer.flush t in
   let%bind () = print_tree dir in
   [%expect
     {|
