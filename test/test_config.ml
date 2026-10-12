@@ -181,3 +181,24 @@ let%expect_test "every example config parses and validates" =
     (sims.sexp (venues 3) (streams 22))
     |}]
 ;;
+
+let%expect_test "snapshot_interval" =
+  let with_interval i =
+    sprintf
+      {|((data_dir /d) %s (venues (((venue Binance) (symbols (BTCUSDT)) (streams (L2))))))|}
+      i
+  in
+  List.iter
+    [ ""; "(snapshot_interval 5m)"; "(snapshot_interval 0s)"; "(snapshot_interval -1s)" ]
+    ~f:(fun i ->
+      match Config.of_sexp (Sexp.of_string (with_interval i)) with
+      | Ok t -> print_s [%sexp (t.snapshot_interval : Time_ns.Span.t)]
+      | Error e -> print_s [%sexp (e : Error.t)]);
+  [%expect
+    {|
+    1m
+    5m
+    0s
+    ("invalid config" (errors ("snapshot_interval: negative")))
+    |}]
+;;
