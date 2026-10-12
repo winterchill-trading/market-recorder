@@ -81,7 +81,12 @@ type t =
 [@@deriving sexp, compare, equal]
 
 (** Parses and validates: at least one venue, every venue with symbols and streams, no
-    [Private] stream, a non-empty upload command. *)
+    [Private] stream, an endpoint the venue has ({!Endpoint.problem}), a non-empty upload
+    command, and no stream the venue can never deliver (it would keep [/healthz] at 503):
+    no [Funding] on Coinbase (spot) or on the Hyperliquid simulator, [Funding] only for
+    [-SWAP] symbols on OKX and [-PERPETUAL] symbols on Deribit, and Kraken symbols that
+    map to a spot pair (for [Trades], [Bbo], [L2]) and to a futures perpetual (for
+    [Funding]). *)
 val of_sexp : Sexp.t -> t Or_error.t
 
 val load : string -> t Or_error.t

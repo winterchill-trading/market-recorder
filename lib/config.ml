@@ -142,6 +142,58 @@ type t =
   }
 [@@deriving sexp, compare, equal]
 
+let has_stream (v : Venue_entry.t) stream =
+  List.mem v.streams stream ~equal:Market_data.Stream.equal
+;;
+
+let symbols_failing (v : Venue_entry.t) ~f =
+  List.filter v.symbols ~f:(fun symbol -> not (f symbol))
+;;
+
+let maps ~f symbol = Result.is_ok (Result.try_with (fun () -> f symbol))
+
+(* Streams a venue entry asks for but can never deliver: such a stream would hold /healthz
+   at 503 forever (or, on Kraken, make the feed raise at start). *)
+let stream_problems (v : Venue_entry.t) =
+  let funding = has_stream v Funding in
+  let needs_suffix suffix kind =
+    if not funding
+    then []
+    else
+      symbols_failing v ~f:(String.is_suffix ~suffix)
+      |> List.map ~f:(fun symbol ->
+        sprintf "Funding needs %s (symbols ending in %s), not %s" kind suffix symbol)
+  in
+  match v.venue with
+  | Coinbase when funding ->
+    [ "Funding is not available (spot only, no funding channel)" ]
+  | Hyperliquid ->
+    (match v.config with
+     | Local _ when funding -> [ "Funding is not served by the simulator (Local)" ]
+     | Local _ | Mainnet | Testnet | Custom _ -> [])
+  | Okx -> needs_suffix "-SWAP" "perpetual swaps"
+  | Deribit -> needs_suffix "-PERPETUAL" "perpetuals"
+  | Kraken ->
+    let spot_streams =
+      List.exists v.streams ~f:(function
+        | Trades | Bbo | L2 -> true
+        | Funding | Private -> false)
+    in
+    List.concat
+      [ (if spot_streams
+         then
+           symbols_failing v ~f:(maps ~f:Kraken_feed.Symbols.spot)
+           |> List.map ~f:(sprintf "%s has no spot name (use BTC/USD or PF_XBTUSD)")
+         else [])
+      ; (if funding
+         then
+           symbols_failing v ~f:(maps ~f:Kraken_feed.Symbols.futures)
+           |> List.map ~f:(sprintf "%s has no futures perpetual for Funding")
+         else [])
+      ]
+  | Binance | Bybit | Coinbase | Bitget | Nyse | Cboe | Cme -> []
+;;
+
 let validate t =
   let errors =
     List.concat
@@ -151,9 +203,18 @@ let validate t =
           List.concat
             [ (if List.is_empty v.symbols then [ name ^ ": no symbols" ] else [])
             ; (if List.is_empty v.streams then [ name ^ ": no streams" ] else [])
-            ; (if List.mem v.streams Private ~equal:Market_data.Stream.equal
+            ; (if has_stream v Private
                then [ name ^ ": Private streams cannot be recorded" ]
                else [])
+            ; (match Endpoint.problem v.config v.venue with
+               | Some reason ->
+                 [ sprintf
+                     "%s: endpoint %s: %s"
+                     name
+                     (Sexp.to_string (Endpoint.sexp_of_t v.config))
+                     reason
+                 ]
+               | None -> List.map (stream_problems v) ~f:(fun p -> name ^ ": " ^ p))
             ])
       ; (match t.upload with
          | Some { command = []; _ } -> [ "upload: empty command" ]
