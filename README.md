@@ -296,7 +296,7 @@ market_recorder_upload_pending 0
 == recorder exit 0
 == files
 ./coinbase/BTC-USD/norm/l2/2026-10-12.bin
-./kraken/BTC/USD/norm/l2/2026-10-12.bin
+./kraken/BTC_USD/norm/l2/2026-10-12.bin
 ./kraken/PF_XBTUSD/norm/funding/2026-10-12.bin
 ./okx/BTC-USDT-SWAP/norm/funding/2026-10-12.bin
 ./raw/bitget/l2/BTCUSDT/2026/10/12/13-35.ndjson.zst
@@ -316,8 +316,8 @@ directory. The first OKX trades line is its subscription ack:
 
 Raw files are kept under the configured symbol, but normalized events carry the symbol
 the venue sends: Kraken's spot streams for `PF_XBTUSD` come from `BTC/USD`, which the
-event log stores under `kraken/BTC/USD/` (one directory level per `/`), while its funding
-stays under `kraken/PF_XBTUSD/`.
+event log stores under `kraken/BTC_USD/` (market-data maps `/` to `_` in paths), while
+its funding stays under `kraken/PF_XBTUSD/`.
 
 ## Throughput
 
