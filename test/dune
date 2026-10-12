@@ -6,6 +6,8 @@
   async
   uri
   zstd
+  cohttp
+  cohttp-async
   market-recorder
   market-data
   hl-client
