@@ -9,10 +9,27 @@ open! Async
     Bitget. *)
 val normalizers : Market_data.Normalizer.t list
 
+(** A raw [(venue, stream)] to leave out, written [venue:stream] (e.g. [binance:l2]). *)
+module Skip : sig
+  type t =
+    { venue : Market_data.Venue.t
+    ; stream : Market_data.Stream.t
+    }
+  [@@deriving sexp_of, equal]
+
+  val of_string : string -> t Or_error.t
+  val arg_type : t Command.Arg_type.t
+end
+
 (** Rebuilds [date] from [<data_dir>/raw] into [out_dir] (new or empty). With [venues],
-    only those venues' raw series are read. *)
+    only those venues' raw series are read. Raw streams in [skip] are not read at all: the
+    rebuild runs over a temporary directory of symlinks to the other
+    [raw/<venue>/<stream>] directories, removed afterwards. A normalizer that emits events
+    of several streams from one raw stream (Hyperliquid [l2] gives [bbo] too) still writes
+    them; skip the raw stream that carries them. *)
 val run
   :  ?venues:Market_data.Venue.t list
+  -> ?skip:Skip.t list
   -> data_dir:string
   -> out_dir:string
   -> Date.t
