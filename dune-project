@@ -27,6 +27,7 @@
   cohttp-async
   uri
   zstd
+  dune-build-info
   ppx_jane
   market-data
   hl-client

@@ -4,6 +4,7 @@
  (libraries
   core
   core_unix
+  dune-build-info
   async
   uri
   cohttp
