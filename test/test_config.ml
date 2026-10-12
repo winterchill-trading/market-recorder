@@ -78,3 +78,81 @@ let%expect_test "endpoints resolve to client configs" =
     (ws://localhost:3401/ws wss://fstream.binance.com)
     |}]
 ;;
+
+let%expect_test "new venues parse with their endpoints" =
+  parse
+    {|((data_dir d)
+       (venues
+        (((venue Okx) (symbols (BTC-USDT-SWAP)) (streams (Trades Bbo L2 Funding)))
+         ((venue Coinbase) (symbols (BTC-USD)) (streams (Trades Bbo L2)))
+         ((venue Kraken) (symbols (PF_XBTUSD BTC/USD)) (streams (Trades Bbo L2 Funding))
+          (config (Custom (base_url ws://localhost:1) (futures_ws_url ws://localhost:2))))
+         ((venue Deribit) (symbols (BTC-PERPETUAL)) (streams (Trades Funding))
+          (config Testnet))
+         ((venue Bitget) (symbols (BTCUSDT)) (streams (Trades Bbo L2 Funding))))))|};
+  [%expect
+    {|
+    ((data_dir d) (http_port 9100)
+     (venues
+      (((venue Okx) (symbols (BTC-USDT-SWAP)) (streams (Trades Bbo L2 Funding))
+        (config Mainnet))
+       ((venue Coinbase) (symbols (BTC-USD)) (streams (Trades Bbo L2))
+        (config Mainnet))
+       ((venue Kraken) (symbols (PF_XBTUSD BTC/USD))
+        (streams (Trades Bbo L2 Funding))
+        (config
+         (Custom (base_url ws://localhost:1) (futures_ws_url ws://localhost:2))))
+       ((venue Deribit) (symbols (BTC-PERPETUAL)) (streams (Trades Funding))
+        (config Testnet))
+       ((venue Bitget) (symbols (BTCUSDT)) (streams (Trades Bbo L2 Funding))
+        (config Mainnet)))))
+    |}]
+;;
+
+let%expect_test "streams and endpoints a venue cannot serve are rejected" =
+  parse
+    {|((data_dir d)
+       (venues
+        (((venue Coinbase) (symbols (BTC-USD)) (streams (Trades Funding)))
+         ((venue Okx) (symbols (BTC-USDT-SWAP BTC-USDT)) (streams (Funding)))
+         ((venue Deribit) (symbols (BTC-27NOV26)) (streams (L2 Funding)))
+         ((venue Kraken) (symbols (XBTUSD PF_XBTUSD)) (streams (Trades Funding)))
+         ((venue Hyperliquid) (symbols (BTC)) (streams (Funding)) (config (Local)))
+         ((venue Bitget) (symbols (BTCUSDT)) (streams (Trades)) (config Testnet))
+         ((venue Okx) (symbols (BTC-USDT-SWAP)) (streams (Trades)) (config (Local)))
+         ((venue Nyse) (symbols (AAPL)) (streams (Trades))))))|};
+  [%expect
+    {|
+    ("invalid config"
+     (errors
+      ("coinbase: Funding is not available (spot only, no funding channel)"
+       "okx: Funding needs perpetual swaps (symbols ending in -SWAP), not BTC-USDT"
+       "deribit: Funding needs perpetuals (symbols ending in -PERPETUAL), not BTC-27NOV26"
+       "kraken: XBTUSD has no futures perpetual for Funding"
+       "hyperliquid: Funding is not served by the simulator (Local)"
+       "bitget: endpoint Testnet: no public testnet, use Mainnet or Custom"
+       "okx: endpoint (Local): no simulator, use Mainnet or Custom"
+       "nyse: endpoint Mainnet: no live feed for this venue")))
+    |}]
+;;
+
+let%expect_test "new venue endpoints resolve to feed configs" =
+  let custom =
+    Config.Endpoint.Custom
+      { base_url = "wss://example.test/ws"; ws_url = None; futures_ws_url = None }
+  in
+  print_s [%sexp (Config.Endpoint.okx Testnet : Okx_feed.Config.t)];
+  print_s [%sexp (Config.Endpoint.coinbase custom : Coinbase_feed.Config.t)];
+  print_s [%sexp (Config.Endpoint.kraken custom : Kraken_feed.Config.t)];
+  print_s [%sexp (Config.Endpoint.deribit Testnet : Deribit_feed.Config.t)];
+  print_s [%sexp (Config.Endpoint.bitget Mainnet : Bitget_feed.Config.t)];
+  [%expect
+    {|
+    ((url wss://wspap.okx.com:8443/ws/v5/public))
+    ((url wss://example.test/ws))
+    ((spot_url wss://example.test/ws)
+     (futures_url wss://futures.kraken.com/ws/v1))
+    ((url wss://test.deribit.com/ws/api/v2) (interval 100ms))
+    ((url wss://ws.bitget.com/v2/ws/public) (inst_type USDT-FUTURES))
+    |}]
+;;
