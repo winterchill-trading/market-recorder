@@ -130,6 +130,31 @@ let health ?(max_age = default_max_age) t =
   if List.is_empty stale then Health.Healthy else Stale stale
 ;;
 
+module Stream_status = struct
+  type t =
+    { key : Key.t
+    ; frames : int
+    ; bytes : int
+    ; events : int
+    ; clamped : int
+    ; flaps : int
+    ; last_frame_age : Time_ns.Span.t
+    }
+  [@@deriving sexp_of]
+end
+
+let streams t =
+  List.map (sorted t) ~f:(fun (key, c) ->
+    { Stream_status.key
+    ; frames = c.frames
+    ; bytes = c.bytes
+    ; events = c.events
+    ; clamped = c.clamped
+    ; flaps = c.flaps
+    ; last_frame_age = age t c
+    })
+;;
+
 let escape s =
   String.concat_map s ~f:(function
     | '\\' -> "\\\\"

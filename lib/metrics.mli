@@ -74,5 +74,21 @@ val default_max_age : Time_ns.Span.t
 
 val health : ?max_age:Time_ns.Span.t -> t -> Health.t
 
+module Stream_status : sig
+  type t =
+    { key : Key.t
+    ; frames : int
+    ; bytes : int
+    ; events : int
+    ; clamped : int
+    ; flaps : int
+    ; last_frame_age : Time_ns.Span.t (** since registration if no frame yet *)
+    }
+  [@@deriving sexp_of]
+end
+
+(** The counters of every stream, sorted by key. *)
+val streams : t -> Stream_status.t list
+
 (** Prometheus text exposition format 0.0.4. *)
 val render : t -> string
