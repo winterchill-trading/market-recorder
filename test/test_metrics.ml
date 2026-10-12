@@ -48,6 +48,10 @@ let%expect_test "counters, health and exposition" =
     # TYPE market_recorder_norm_pipe_length gauge
     market_recorder_norm_pipe_length{venue="hyperliquid",stream="l2",symbol="BTC"} 0
     market_recorder_norm_pipe_length{venue="binance",stream="trades",symbol="BTCUSDT"} 0
+    # HELP market_recorder_healthz_flaps_total Times the stream went stale (no frame for 30s) after being fresh.
+    # TYPE market_recorder_healthz_flaps_total counter
+    market_recorder_healthz_flaps_total{venue="hyperliquid",stream="l2",symbol="BTC"} 1
+    market_recorder_healthz_flaps_total{venue="binance",stream="trades",symbol="BTCUSDT"} 0
     # HELP market_recorder_last_frame_age_seconds Seconds since the last raw frame (since start if none yet).
     # TYPE market_recorder_last_frame_age_seconds gauge
     market_recorder_last_frame_age_seconds{venue="hyperliquid",stream="l2",symbol="BTC"} 35.000
@@ -112,5 +116,36 @@ let%expect_test "norm pipe length gauge" =
   |> List.iter ~f:print_endline;
   [%expect
     {| market_recorder_norm_pipe_length{venue="kraken",stream="l2",symbol="BTC/USD"} 2 |}];
+  return ()
+;;
+
+let%expect_test "healthz flaps count fresh to stale transitions" =
+  let now = ref (time "2026-10-12T09:00:00Z") in
+  let t = Metrics.create ~now:(fun () -> !now) () in
+  let key : Metrics.Key.t =
+    { venue = Deribit; stream = Trades; symbol = "BTC-PERPETUAL" }
+  in
+  Metrics.register t key;
+  let at s ~frame =
+    now := time s;
+    if frame then Metrics.frame t key ~recv_ts:!now ~bytes:1;
+    Metrics.render t
+    |> String.split_lines
+    |> List.filter ~f:(String.is_prefix ~prefix:"market_recorder_healthz_flaps")
+    |> List.iter ~f:print_endline
+  in
+  at "2026-10-12T09:00:10Z" ~frame:true;
+  at "2026-10-12T09:00:50Z" ~frame:false;
+  at "2026-10-12T09:01:00Z" ~frame:false;
+  at "2026-10-12T09:01:05Z" ~frame:true;
+  at "2026-10-12T09:02:00Z" ~frame:false;
+  [%expect
+    {|
+    market_recorder_healthz_flaps_total{venue="deribit",stream="trades",symbol="BTC-PERPETUAL"} 0
+    market_recorder_healthz_flaps_total{venue="deribit",stream="trades",symbol="BTC-PERPETUAL"} 1
+    market_recorder_healthz_flaps_total{venue="deribit",stream="trades",symbol="BTC-PERPETUAL"} 1
+    market_recorder_healthz_flaps_total{venue="deribit",stream="trades",symbol="BTC-PERPETUAL"} 1
+    market_recorder_healthz_flaps_total{venue="deribit",stream="trades",symbol="BTC-PERPETUAL"} 2
+    |}];
   return ()
 ;;
