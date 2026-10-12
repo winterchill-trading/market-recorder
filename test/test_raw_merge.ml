@@ -148,3 +148,130 @@ let%expect_test "a frame stamped on both sides of a minute boundary is kept once
     |}];
   return ()
 ;;
+
+let write_minute ~data_dir ~venue ~stream ~symbol ~name lines =
+  let dir = data_dir ^/ "raw" ^/ venue ^/ stream ^/ symbol ^/ "2026/10/12" in
+  let%bind () = Unix.mkdir ~p:() dir in
+  Writer.save
+    (dir ^/ name ^ ".ndjson")
+    ~contents:(String.concat (List.map lines ~f:(fun l -> l ^ "\n")))
+;;
+
+let at hm sec text = sprintf "2026-10-12T13:%s:%sZ %s" hm sec text
+
+let two_collectors dir =
+  let a = dir ^/ "a"
+  and b = dir ^/ "b" in
+  let%bind () =
+    write_minute
+      ~data_dir:a
+      ~venue:"binance"
+      ~stream:"trades"
+      ~symbol:"BTCUSDT"
+      ~name:"13-35"
+      [ at "35" "01.000000" "t1"; ""; at "35" "40.000000" "t4" ]
+  in
+  let%bind () =
+    write_minute
+      ~data_dir:b
+      ~venue:"binance"
+      ~stream:"trades"
+      ~symbol:"BTCUSDT"
+      ~name:"13-35"
+      [ at "35" "01.000200" "t1"
+      ; at "35" "10.000000" "t2"
+      ; at "35" "20.000000" "t3"
+      ; at "35" "40.000100" "t4"
+      ]
+  in
+  (* collector A was down for 13:36 *)
+  let%bind () =
+    write_minute
+      ~data_dir:b
+      ~venue:"binance"
+      ~stream:"trades"
+      ~symbol:"BTCUSDT"
+      ~name:"13-36"
+      [ at "36" "05.000000" "t5" ]
+  in
+  let%bind () =
+    write_minute
+      ~data_dir:a
+      ~venue:"hyperliquid"
+      ~stream:"l2"
+      ~symbol:"BTC"
+      ~name:"13-35"
+      [ at "35" "02.000000" "b1" ]
+  in
+  let%bind () =
+    write_minute
+      ~data_dir:b
+      ~venue:"hyperliquid"
+      ~stream:"l2"
+      ~symbol:"BTC"
+      ~name:"13-35"
+      [ at "35" "02.000000" "b1" ]
+  in
+  (* compress A's binance minute the way the recorder does *)
+  let%map (_ : string) =
+    Raw_writer.compress_file (a ^/ "raw/binance/trades/BTCUSDT/2026/10/12/13-35.ndjson")
+  in
+  a, b
+;;
+
+let%expect_test "merge a day of two collectors" =
+  let dir = Helpers.temp_dir () in
+  let%bind a_dir, b_dir = two_collectors dir in
+  let out_dir = dir ^/ "out" in
+  let date = Date.of_string "2026-10-12" in
+  let%bind report = Raw_merge.run ~a_dir ~b_dir ~out_dir date in
+  print_s
+    [%sexp
+      (Or_error.map report ~f:(fun r -> r.series)
+       : (Raw_merge.Series.t * Raw_merge.Counts.t) list Or_error.t)];
+  [%expect
+    {|
+    (Ok
+     ((((venue Hyperliquid) (stream L2) (symbol_dir BTC))
+       ((minutes 1) (only_a 0) (only_b 0) (both 1) (gaps_closed 0) (gaps_kept 0)))
+      (((venue Binance) (stream Trades) (symbol_dir BTCUSDT))
+       ((minutes 2) (only_a 0) (only_b 3) (both 2) (gaps_closed 1) (gaps_kept 0)))))
+    |}];
+  let%bind () = Helpers.print_tree out_dir in
+  [%expect
+    {|
+    _merge/2026-10-12.json
+    raw/binance/trades/BTCUSDT/2026/10/12/13-35.ndjson.zst
+    raw/binance/trades/BTCUSDT/2026/10/12/13-36.ndjson.zst
+    raw/hyperliquid/l2/BTC/2026/10/12/13-35.ndjson.zst
+    |}];
+  let%bind merged =
+    Helpers.unzstd (out_dir ^/ "raw/binance/trades/BTCUSDT/2026/10/12/13-35.ndjson.zst")
+  in
+  print_string merged;
+  [%expect
+    {|
+    2026-10-12T13:35:01.000000Z t1
+    2026-10-12T13:35:10.000000Z t2
+    2026-10-12T13:35:20.000000Z t3
+    2026-10-12T13:35:40.000000Z t4
+    |}];
+  let%bind json = Reader.file_contents (out_dir ^/ "_merge/2026-10-12.json") in
+  print_string json;
+  [%expect
+    {|
+    {
+      "date": "2026-10-12",
+      "window_ms": 5000,
+      "total": {"minutes": 3, "only_a": 0, "only_b": 3, "both": 3, "gaps_closed": 1, "gaps_kept": 0},
+      "series": [
+        {"venue": "hyperliquid", "stream": "l2", "symbol": "BTC", "minutes": 1, "only_a": 0, "only_b": 0, "both": 1, "gaps_closed": 0, "gaps_kept": 0},
+        {"venue": "binance", "stream": "trades", "symbol": "BTCUSDT", "minutes": 2, "only_a": 0, "only_b": 3, "both": 2, "gaps_closed": 1, "gaps_kept": 0}
+      ]
+    }
+    |}];
+  let%bind again = Raw_merge.run ~a_dir ~b_dir ~out_dir date in
+  print_s [%sexp (Result.is_error again : bool)];
+  [%expect {| true |}];
+  return ()
+;;
