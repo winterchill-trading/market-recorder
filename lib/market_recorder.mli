@@ -10,3 +10,4 @@ module Process_metrics = Process_metrics
 module Warnings = Warnings
 module Recorder = Recorder
 module Http_server = Http_server
+module Status_table = Status_table
