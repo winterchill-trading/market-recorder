@@ -12,6 +12,7 @@ end
 module Counters = struct
   type t =
     { registered : Time_ns.t
+    ; mutable raw : bool
     ; mutable frames : int
     ; mutable bytes : int
     ; mutable events : int
@@ -61,6 +62,7 @@ let create ?(now = Time_ns.now) () =
 let get t key =
   Hashtbl.find_or_add t.counters key ~default:(fun () ->
     { Counters.registered = t.now ()
+    ; raw = true
     ; frames = 0
     ; bytes = 0
     ; events = 0
@@ -72,7 +74,7 @@ let get t key =
     })
 ;;
 
-let register t key = ignore (get t key : Counters.t)
+let register ?(raw = true) t key = (get t key).raw <- raw
 
 let frame t key ~recv_ts ~bytes =
   let c = get t key in
@@ -154,11 +156,14 @@ let default_max_age = Time_ns.Span.of_sec 30.
 let health ?(max_age = default_max_age) t =
   let stale =
     List.filter_map (sorted t) ~f:(fun (key, c) ->
-      let last_frame_age = age t c in
-      let stale = Time_ns.Span.( > ) last_frame_age max_age in
-      if stale && not c.stale then c.flaps <- c.flaps + 1;
-      c.stale <- stale;
-      if stale then Some { Health.key; last_frame_age; frames = c.frames } else None)
+      if not c.raw
+      then None
+      else (
+        let last_frame_age = age t c in
+        let stale = Time_ns.Span.( > ) last_frame_age max_age in
+        if stale && not c.stale then c.flaps <- c.flaps + 1;
+        c.stale <- stale;
+        if stale then Some { Health.key; last_frame_age; frames = c.frames } else None))
   in
   if List.is_empty stale then Health.Healthy else Stale stale
 ;;
@@ -208,17 +213,19 @@ let render t =
   ignore (health t : Health.t);
   let buf = Buffer.create 1024 in
   let rows = sorted t in
-  let family name ~type_ ~help value =
+  let family ?(raw_only = false) name ~type_ ~help value =
     bprintf buf "# HELP %s %s\n# TYPE %s %s\n" name help name type_;
-    List.iter rows ~f:(fun (key, c) ->
-      bprintf buf "%s%s %s\n" name (labels key) (value c))
+    List.iter rows ~f:(fun (key, (c : Counters.t)) ->
+      if c.raw || not raw_only then bprintf buf "%s%s %s\n" name (labels key) (value c))
   in
   family
+    ~raw_only:true
     "market_recorder_frames_total"
     ~type_:"counter"
     ~help:"Raw frames received."
     (fun c -> Int.to_string c.frames);
   family
+    ~raw_only:true
     "market_recorder_bytes_total"
     ~type_:"counter"
     ~help:"Bytes of raw frames received."
@@ -229,6 +236,7 @@ let render t =
     ~help:"Normalized events written."
     (fun c -> Int.to_string c.events);
   family
+    ~raw_only:true
     "market_recorder_clamped_frames_total"
     ~type_:"counter"
     ~help:"Raw frames whose recv_ts went backwards and was raised to the previous one."
@@ -239,11 +247,13 @@ let render t =
     ~help:"Normalized events waiting in the pipe to the event log writer."
     (fun c -> Int.to_string (c.pipe_length ()));
   family
+    ~raw_only:true
     "market_recorder_healthz_flaps_total"
     ~type_:"counter"
     ~help:"Times the stream went stale (no frame for 30s) after being fresh."
     (fun c -> Int.to_string c.flaps);
   family
+    ~raw_only:true
     "market_recorder_last_frame_age_seconds"
     ~type_:"gauge"
     ~help:"Seconds since the last raw frame (since start if none yet)."

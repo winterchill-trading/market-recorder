@@ -21,8 +21,13 @@ type t
     delivered ages from when it was registered. *)
 val create : ?now:(unit -> Time_ns.t) -> unit -> t
 
-(** Declares an expected stream; health requires a recent frame from every one. *)
-val register : t -> Key.t -> unit
+(** Declares an expected stream; health requires a recent frame from every one.
+
+    [raw] (default [true]) is [false] for a stream whose frames are recorded under another
+    stream, e.g. Hyperliquid [Bbo] next to [L2] (both come from the same [l2Book] frames,
+    written once under [L2]). Such a stream only counts normalized events: it is left out
+    of the health rule and of the raw frame metrics. *)
+val register : ?raw:bool -> t -> Key.t -> unit
 
 val frame : t -> Key.t -> recv_ts:Time_ns.t -> bytes:int -> unit
 
