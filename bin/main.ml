@@ -89,6 +89,10 @@ let status =
 let () =
   Command.group
     ~summary:"Raw-first market data recorder"
-    [ "run", run; "check-config", check; "status", status ]
+    [ "run", run
+    ; "check-config", check
+    ; "status", status
+    ; "rebuild-norm", Rebuild.command
+    ]
   |> Command_unix.run
 ;;
