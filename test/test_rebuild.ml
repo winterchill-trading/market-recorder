@@ -45,13 +45,16 @@ let raw_day data_dir =
     ]
 ;;
 
-let rebuild ?venues () =
+let rebuild ?venues ?skip () =
   let dir = Helpers.temp_dir () in
   let data_dir = dir ^/ "data"
   and out_dir = dir ^/ "out" in
   let%bind () = raw_day data_dir in
-  let%bind stats = Rebuild.run ?venues ~data_dir ~out_dir date in
+  let%bind before = Helpers.tree data_dir in
+  let%bind stats = Rebuild.run ?venues ?skip ~data_dir ~out_dir date in
   print_s [%sexp (stats : Md.Rebuild_norm.Stats.t Or_error.t)];
+  let%bind after = Helpers.tree data_dir in
+  if not ([%equal: string list] before after) then print_endline "data dir changed";
   Helpers.print_tree out_dir
 ;;
 
@@ -82,6 +85,33 @@ let%expect_test "-venue keeps one venue" =
      ((files 2) (frames 2) (disconnects 0) (events 1) (frame_errors 0)
       (first_errors ()) (skipped_files 1) (skipped_venues (Hyperliquid))))
     binance/BTCUSDT/norm/trades/2026-10-12.bin
+    |}];
+  return ()
+;;
+
+let%expect_test "-skip leaves a raw stream out" =
+  let%bind () = rebuild ~skip:[ { venue = Hyperliquid; stream = Trades } ] () in
+  [%expect
+    {|
+    (Ok
+     ((files 1) (frames 2) (disconnects 0) (events 1) (frame_errors 0)
+      (first_errors ()) (skipped_files 0) (skipped_venues ())))
+    binance/BTCUSDT/norm/trades/2026-10-12.bin
+    |}];
+  return ()
+;;
+
+let%expect_test "skip parsing" =
+  List.iter
+    [ "binance:l2"; "Hyperliquid:BBO"; "binance"; "binance:depth"; "nasdaq:l2" ]
+    ~f:(fun s -> print_s [%sexp (Rebuild.Skip.of_string s : Rebuild.Skip.t Or_error.t)]);
+  [%expect
+    {|
+    (Ok ((venue Binance) (stream L2)))
+    (Ok ((venue Hyperliquid) (stream Bbo)))
+    (Error ("expected venue:stream" binance))
+    (Error ("unknown venue or stream" binance:depth))
+    (Error ("unknown venue or stream" nasdaq:l2))
     |}];
   return ()
 ;;
