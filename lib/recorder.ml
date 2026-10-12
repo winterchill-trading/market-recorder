@@ -153,18 +153,18 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
         in
         stats (frames, parse_errors, reconnects) )
   | Bitget ->
-    let%map feed, read =
-      Bitget_feed.Live_feed.create_with_stats
+    let%map t =
+      Bitget_feed.Live_feed.connect
         ~on_raw
         (Config.Endpoint.bitget entry.config)
         ~symbols
         ~streams
     in
-    ( Market_data.Feed.With_gaps.of_feed feed
+    ( Bitget_feed.Live_feed.feed_with_gaps t
     , fun () ->
         let { Bitget_feed.Live_feed.Stats.frames; parse_errors; error_events; reconnects }
           =
-          read ()
+          Bitget_feed.Live_feed.stats t
         in
         stats (frames, parse_errors + error_events, reconnects) )
   | (Nyse | Cboe | Cme) as venue ->
