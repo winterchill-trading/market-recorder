@@ -12,6 +12,7 @@ module Counts = struct
     ; gaps_closed : int
     ; gaps_kept : int
     ; text_differs : int
+    ; previous_day : int
     }
   [@@deriving sexp_of, equal]
 
@@ -23,6 +24,7 @@ module Counts = struct
     ; gaps_closed = 0
     ; gaps_kept = 0
     ; text_differs = 0
+    ; previous_day = 0
     }
   ;;
 
@@ -34,6 +36,7 @@ module Counts = struct
     ; gaps_closed = x.gaps_closed + y.gaps_closed
     ; gaps_kept = x.gaps_kept + y.gaps_kept
     ; text_differs = x.text_differs + y.text_differs
+    ; previous_day = x.previous_day + y.previous_day
     }
   ;;
 end
@@ -59,9 +62,12 @@ module Carry = struct
   type t =
     { minute : Time_ns.t (** the minute the entries came from *)
     ; entries : entry list String.Table.t (** by identity, in time order *)
+    ; previous_day : bool (** the entries were written by the previous day's merge *)
     }
 
-  let empty = { minute = Time_ns.epoch; entries = String.Table.create () }
+  let empty =
+    { minute = Time_ns.epoch; entries = String.Table.create (); previous_day = false }
+  ;;
 end
 
 type frame =
@@ -142,7 +148,8 @@ let merge_minute
   let only_a = ref 0
   and only_b = ref 0
   and both = ref 0
-  and text_differs = ref 0 in
+  and text_differs = ref 0
+  and previous_day = ref 0 in
   let matched (x : string) y =
     incr both;
     if not (String.equal x y) then incr text_differs
@@ -171,8 +178,11 @@ let merge_minute
     match match_carried with
     | Some e ->
       e.used <- true;
-      matched e.payload f.payload;
-      bump e.side (-1)
+      if carry.previous_day
+      then incr previous_day
+      else (
+        matched e.payload f.payload;
+        bump e.side (-1))
     | None ->
       bump f.side 1;
       emit f;
@@ -253,9 +263,10 @@ let merge_minute
     ; gaps_closed = !gaps_closed
     ; gaps_kept = !gaps_kept
     ; text_differs = !text_differs
+    ; previous_day = !previous_day
     }
   in
-  lines, counts, { Carry.minute; entries = next_carry }
+  lines, counts, { Carry.minute; entries = next_carry; previous_day = false }
 ;;
 
 module Series = struct
@@ -314,7 +325,7 @@ module Report = struct
 
   let counts_fields (c : Counts.t) =
     sprintf
-      {|"minutes": %d, "only_a": %d, "only_b": %d, "both": %d, "gaps_closed": %d, "gaps_kept": %d, "text_differs": %d|}
+      {|"minutes": %d, "only_a": %d, "only_b": %d, "both": %d, "gaps_closed": %d, "gaps_kept": %d, "text_differs": %d, "previous_day": %d|}
       c.minutes
       c.only_a
       c.only_b
@@ -322,6 +333,7 @@ module Report = struct
       c.gaps_closed
       c.gaps_kept
       c.text_differs
+      c.previous_day
   ;;
 
   let ts time = quote (Raw_writer.format_ts time)
@@ -423,8 +435,17 @@ let run
           ~first:(List.hd_exn existing).path]
   else (
     let%bind a_files = Raw_minute.files ~data_dir:a_dir date
-    and b_files = Raw_minute.files ~data_dir:b_dir date in
+    and b_files = Raw_minute.files ~data_dir:b_dir date
+    and a_before = Raw_minute.files ~data_dir:a_dir (Date.add_days date (-1))
+    and b_before = Raw_minute.files ~data_dir:b_dir (Date.add_days date (-1)) in
     let key (_, (f : Raw_minute.File.t)) = Series.of_file f, f.minute in
+    (* the previous day's last minute, to match frames stamped across midnight *)
+    let last_minute = Time_ns.sub day_start Time_ns.Span.minute in
+    let seeds =
+      List.map a_before ~f:(fun f -> A, f) @ List.map b_before ~f:(fun f -> B, f)
+      |> List.filter ~f:(fun (_, (f : Raw_minute.File.t)) ->
+        Time_ns.equal f.minute last_minute)
+    in
     let tagged =
       List.map a_files ~f:(fun f -> A, f) @ List.map b_files ~f:(fun f -> B, f)
       |> List.stable_sort ~compare:(fun x y ->
@@ -470,22 +491,54 @@ let run
           List.group files ~break:(fun x y ->
             not (Time_ns.equal (snd (key x)) (snd (key y))))
         in
+        let copies files =
+          let copy side =
+            match
+              List.filter_map files ~f:(fun (s, f) ->
+                Option.some_if (equal_side s side) f)
+            with
+            | [] -> return (Ok None)
+            | files -> read_copy files |> Deferred.Or_error.map ~f:Option.some
+          in
+          let%bind.Deferred.Or_error a = copy A in
+          let%map.Deferred.Or_error b = copy B in
+          a, b
+        in
+        let track_copies (a, b) lines =
+          Option.iter trackers ~f:(fun (merged, ta, tb) ->
+            track merged lines;
+            Option.iter a ~f:(track ta);
+            Option.iter b ~f:(track tb))
+        in
+        let%bind.Deferred.Or_error carry =
+          match List.filter seeds ~f:(fun x -> Series.equal (fst (key x)) s) with
+          | [] -> return (Ok Carry.empty)
+          | files ->
+            let%map.Deferred.Or_error a, b = copies files in
+            let lines, _, carry =
+              merge_minute
+                ~identity
+                ~clock_error
+                ~window
+                ~minute:last_minute
+                Carry.empty
+                ~a
+                ~b
+            in
+            track_copies (a, b) lines;
+            Option.iter trackers ~f:(fun (merged, ta, tb) ->
+              List.iter [ merged; ta; tb ] ~f:(fun t ->
+                Seq_gaps.flush t;
+                Seq_gaps.clear_gaps t));
+            { carry with previous_day = true }
+        in
         let%map.Deferred.Or_error _carry, counts =
           Deferred.Or_error.List.fold
             minutes
-            ~init:(Carry.empty, Counts.zero)
+            ~init:(carry, Counts.zero)
             ~f:(fun (carry, total) files ->
               let minute = snd (key (List.hd_exn files)) in
-              let copy side =
-                match
-                  List.filter_map files ~f:(fun (s, f) ->
-                    Option.some_if (equal_side s side) f)
-                with
-                | [] -> return (Ok None)
-                | files -> read_copy files |> Deferred.Or_error.map ~f:Option.some
-              in
-              let%bind.Deferred.Or_error a = copy A in
-              let%bind.Deferred.Or_error b = copy B in
+              let%bind.Deferred.Or_error a, b = copies files in
               let lines, counts, carry =
                 merge_minute ~identity ~clock_error ~window ~minute carry ~a ~b
               in
@@ -493,10 +546,7 @@ let run
                 match line with
                 | Disconnect -> ()
                 | Frame { recv_ts; _ } -> Silence.add quiet recv_ts);
-              Option.iter trackers ~f:(fun (merged, ta, tb) ->
-                track merged lines;
-                Option.iter a ~f:(track ta);
-                Option.iter b ~f:(track tb));
+              track_copies (a, b) lines;
               List.iter lines ~f:(fun (line : Line.t) ->
                 match line with
                 | Frame { recv_ts; payload } ->

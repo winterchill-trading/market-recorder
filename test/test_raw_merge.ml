@@ -47,7 +47,7 @@ let%expect_test "earliest copy of each frame wins" =
     2026-10-12T13:35:03.000000Z x3
     2026-10-12T13:35:04.000000Z x4
     ((minutes 1) (only_a 1) (only_b 1) (both 2) (gaps_closed 0) (gaps_kept 0)
-     (text_differs 0))
+     (text_differs 0) (previous_day 0))
     |}];
   return ()
 ;;
@@ -67,7 +67,7 @@ let%expect_test "repeated frames pair up in time order, outside the window stay 
     2026-10-12T13:35:30.000000Z same
     2026-10-12T13:35:40.000000Z same
     ((minutes 1) (only_a 1) (only_b 1) (both 2) (gaps_closed 0) (gaps_kept 0)
-     (text_differs 0))
+     (text_differs 0) (previous_day 0))
     |}];
   return ()
 ;;
@@ -84,7 +84,7 @@ let%expect_test "a disconnect the other copy covered is dropped" =
     2026-10-12T13:35:05.000000Z x5
     2026-10-12T13:35:09.000000Z x9
     ((minutes 1) (only_a 0) (only_b 1) (both 2) (gaps_closed 1) (gaps_kept 0)
-     (text_differs 0))
+     (text_differs 0) (previous_day 0))
     |}];
   return ()
 ;;
@@ -104,7 +104,7 @@ let%expect_test "overlapping disconnects stay as one gap" =
     2026-10-12T13:35:09.000000Z x9
     2026-10-12T13:35:20.000000Z x20
     ((minutes 1) (only_a 1) (only_b 2) (both 1) (gaps_closed 1) (gaps_kept 1)
-     (text_differs 0))
+     (text_differs 0) (previous_day 0))
     |}];
   return ()
 ;;
@@ -119,7 +119,7 @@ let%expect_test "a missing file is a gap over the whole minute" =
     <disconnect>
     2026-10-12T13:35:09.000000Z x9
     ((minutes 1) (only_a 2) (only_b 0) (both 0) (gaps_closed 0) (gaps_kept 1)
-     (text_differs 0))
+     (text_differs 0) (previous_day 0))
     |}];
   let (_ : Raw_merge.Carry.t) = merge None (Some [ ""; frame "09.000000" "x9" ]) in
   [%expect
@@ -127,7 +127,7 @@ let%expect_test "a missing file is a gap over the whole minute" =
     <disconnect>
     2026-10-12T13:35:09.000000Z x9
     ((minutes 1) (only_a 0) (only_b 1) (both 0) (gaps_closed 0) (gaps_kept 1)
-     (text_differs 0))
+     (text_differs 0) (previous_day 0))
     |}];
   return ()
 ;;
@@ -141,7 +141,7 @@ let%expect_test "a frame stamped on both sides of a minute boundary is kept once
     2026-10-12T13:35:30.000000Z early
     2026-10-12T13:35:59.999000Z edge
     ((minutes 1) (only_a 1) (only_b 1) (both 0) (gaps_closed 0) (gaps_kept 0)
-     (text_differs 0))
+     (text_differs 0) (previous_day 0))
     |}];
   let (_ : Raw_merge.Carry.t) =
     merge
@@ -154,7 +154,7 @@ let%expect_test "a frame stamped on both sides of a minute boundary is kept once
     {|
     2026-10-12T13:36:01.000000Z next
     ((minutes 1) (only_a -1) (only_b 0) (both 2) (gaps_closed 0) (gaps_kept 0)
-     (text_differs 0))
+     (text_differs 0) (previous_day 0))
     |}];
   return ()
 ;;
@@ -184,7 +184,7 @@ let%expect_test "frames with the same venue sequence are one message" =
     2026-10-12T13:35:02.000000Z {"stream":"btcusdt@depth@100ms","data":{"e":"depthUpdate","E":2,"T":1,"s":"BTCUSDT","U":8,"u":8,"pu":7,"b":[],"a":[]}}
     2026-10-12T13:35:03.000000Z {"stream":"btcusdt@depth@100ms","data":{"e":"depthUpdate","E":3,"T":1,"s":"BTCUSDT","U":9,"u":9,"pu":8,"b":[],"a":[]}}
     ((minutes 1) (only_a 1) (only_b 1) (both 1) (gaps_closed 0) (gaps_kept 0)
-     (text_differs 1))
+     (text_differs 1) (previous_day 0))
     |}];
   return ()
 ;;
@@ -200,7 +200,7 @@ let%expect_test "the clock bound widens the window and stops ordering close copi
     2026-10-12T13:35:10.000000Z x2
     2026-10-12T13:35:15.500000Z x2
     ((minutes 1) (only_a 1) (only_b 1) (both 1) (gaps_closed 0) (gaps_kept 0)
-     (text_differs 0))
+     (text_differs 0) (previous_day 0))
     |}];
   let (_ : Raw_merge.Carry.t) = merge ~clock_error:(Time_ns.Span.of_sec 1.) a b in
   [%expect
@@ -208,7 +208,7 @@ let%expect_test "the clock bound widens the window and stops ordering close copi
     2026-10-12T13:35:01.000000Z x1
     2026-10-12T13:35:10.000000Z x2
     ((minutes 1) (only_a 0) (only_b 0) (both 2) (gaps_closed 0) (gaps_kept 0)
-     (text_differs 0))
+     (text_differs 0) (previous_day 0))
     |}];
   return ()
 ;;
@@ -298,10 +298,10 @@ let%expect_test "merge a day of two collectors" =
     (Ok
      ((((venue Hyperliquid) (stream L2) (symbol_dir BTC))
        ((minutes 1) (only_a 0) (only_b 0) (both 1) (gaps_closed 0) (gaps_kept 0)
-        (text_differs 0)))
+        (text_differs 0) (previous_day 0)))
       (((venue Binance) (stream Trades) (symbol_dir BTCUSDT))
        ((minutes 2) (only_a 0) (only_b 3) (both 2) (gaps_closed 1) (gaps_kept 0)
-        (text_differs 0)))))
+        (text_differs 0) (previous_day 0)))))
     |}];
   let%bind () = Helpers.print_tree out_dir in
   [%expect
@@ -330,10 +330,10 @@ let%expect_test "merge a day of two collectors" =
       "date": "2026-10-12",
       "window_ms": 5000,
       "clock_error_ms": 0,
-      "total": {"minutes": 3, "only_a": 0, "only_b": 3, "both": 3, "gaps_closed": 1, "gaps_kept": 0, "text_differs": 0},
+      "total": {"minutes": 3, "only_a": 0, "only_b": 3, "both": 3, "gaps_closed": 1, "gaps_kept": 0, "text_differs": 0, "previous_day": 0},
       "series": [
-        {"venue": "hyperliquid", "stream": "l2", "symbol": "BTC", "minutes": 1, "only_a": 0, "only_b": 0, "both": 1, "gaps_closed": 0, "gaps_kept": 0, "text_differs": 0, "median_interval_ms": null, "suspected_gaps": []},
-        {"venue": "binance", "stream": "trades", "symbol": "BTCUSDT", "minutes": 2, "only_a": 0, "only_b": 3, "both": 2, "gaps_closed": 1, "gaps_kept": 0, "text_differs": 0, "median_interval_ms": 16777.215, "suspected_gaps": [], "seq_gaps_a": 0, "seq_gaps_b": 0, "seq_gaps": []}
+        {"venue": "hyperliquid", "stream": "l2", "symbol": "BTC", "minutes": 1, "only_a": 0, "only_b": 0, "both": 1, "gaps_closed": 0, "gaps_kept": 0, "text_differs": 0, "previous_day": 0, "median_interval_ms": null, "suspected_gaps": []},
+        {"venue": "binance", "stream": "trades", "symbol": "BTCUSDT", "minutes": 2, "only_a": 0, "only_b": 3, "both": 2, "gaps_closed": 1, "gaps_kept": 0, "text_differs": 0, "previous_day": 0, "median_interval_ms": 16777.215, "suspected_gaps": [], "seq_gaps_a": 0, "seq_gaps_b": 0, "seq_gaps": []}
       ]
     }
     |}];
@@ -384,7 +384,7 @@ let%expect_test "sequence gaps: filled from the peer, or listed when both miss t
   |> List.filter ~f:(String.is_substring ~substring:"seq_gaps")
   |> List.iter ~f:print_endline;
   [%expect
-    {| {"venue": "binance", "stream": "trades", "symbol": "BTCUSDT", "minutes": 1, "only_a": 1, "only_b": 2, "both": 5, "gaps_closed": 0, "gaps_kept": 0, "text_differs": 0, "median_interval_ms": 1048.575, "suspected_gaps": [], "seq_gaps_a": 2, "seq_gaps_b": 2, "seq_gaps": [{"first_missing": 8, "last_missing": 8, "at": "2026-10-12T13:35:09.000000Z"}]} |}];
+    {| {"venue": "binance", "stream": "trades", "symbol": "BTCUSDT", "minutes": 1, "only_a": 1, "only_b": 2, "both": 5, "gaps_closed": 0, "gaps_kept": 0, "text_differs": 0, "previous_day": 0, "median_interval_ms": 1048.575, "suspected_gaps": [], "seq_gaps_a": 2, "seq_gaps_b": 2, "seq_gaps": [{"first_missing": 8, "last_missing": 8, "at": "2026-10-12T13:35:09.000000Z"}]} |}];
   return ()
 ;;
 
@@ -434,6 +434,82 @@ let%expect_test "suspected gaps: a ticking stream silent in both copies" =
         (((from "2026-10-12 00:00:00Z") (until "2026-10-12 13:35:00Z"))
          ((from "2026-10-12 13:35:19.9Z") (until "2026-10-12 13:35:30Z"))
          ((from "2026-10-12 13:35:59.9Z") (until "2026-10-13 00:00:00Z")))))))
+    |}];
+  return ()
+;;
+
+let%expect_test "frames stamped across midnight are matched with the previous day" =
+  let dir = Helpers.temp_dir () in
+  let a_dir = dir ^/ "a"
+  and b_dir = dir ^/ "b" in
+  let minute ~data_dir ~day ~name lines =
+    let d = data_dir ^/ "raw/binance/l2/BTCUSDT/2026/10" ^/ day in
+    let%bind () = Unix.mkdir ~p:() d in
+    Writer.save
+      (d ^/ name ^ ".ndjson")
+      ~contents:(String.concat (List.map lines ~f:(fun l -> l ^ "\n")))
+  in
+  let depth u =
+    sprintf
+      {|{"stream":"btcusdt@depth@100ms","data":{"e":"depthUpdate","E":1,"T":1,"s":"BTCUSDT","U":%d,"u":%d,"pu":%d,"b":[],"a":[]}}|}
+      u
+      u
+      (u - 1)
+  in
+  (* A stamps update 2 just before midnight, B just after; B misses update 3 *)
+  let%bind () =
+    minute
+      ~data_dir:a_dir
+      ~day:"11"
+      ~name:"23-59"
+      [ "2026-10-11T23:59:59.000000Z " ^ depth 1
+      ; "2026-10-11T23:59:59.999000Z " ^ depth 2
+      ]
+  in
+  let%bind () =
+    minute
+      ~data_dir:b_dir
+      ~day:"11"
+      ~name:"23-59"
+      [ "2026-10-11T23:59:59.000100Z " ^ depth 1 ]
+  in
+  let%bind () =
+    minute
+      ~data_dir:a_dir
+      ~day:"12"
+      ~name:"00-00"
+      [ "2026-10-12T00:00:00.100000Z " ^ depth 3
+      ; "2026-10-12T00:00:00.200000Z " ^ depth 4
+      ]
+  in
+  let%bind () =
+    minute
+      ~data_dir:b_dir
+      ~day:"12"
+      ~name:"00-00"
+      [ "2026-10-12T00:00:00.000500Z " ^ depth 2
+      ; "2026-10-12T00:00:00.200100Z " ^ depth 4
+      ]
+  in
+  let out_dir = dir ^/ "out" in
+  let%bind report = Raw_merge.run ~a_dir ~b_dir ~out_dir (Date.of_string "2026-10-12") in
+  let report = Or_error.ok_exn report in
+  print_s [%sexp (report.total : Raw_merge.Counts.t)];
+  print_s [%sexp (report.findings : (Raw_merge.Series.t * Raw_merge.Findings.t) list)];
+  let%bind merged =
+    Helpers.unzstd (out_dir ^/ "raw/binance/l2/BTCUSDT/2026/10/12/00-00.ndjson.zst")
+  in
+  String.split_lines merged |> List.iter ~f:(fun l -> print_endline (String.prefix l 27));
+  [%expect
+    {|
+    ((minutes 1) (only_a 1) (only_b 0) (both 1) (gaps_closed 0) (gaps_kept 0)
+     (text_differs 0) (previous_day 1))
+    ((((venue Binance) (stream L2) (symbol_dir BTCUSDT))
+      ((seq (((gaps ()) (gaps_a 0) (gaps_b 1)))) (median_interval (131.071ms))
+       (suspected
+        (((from "2026-10-12 00:00:00.2Z") (until "2026-10-13 00:00:00Z")))))))
+    2026-10-12T00:00:00.100000Z
+    2026-10-12T00:00:00.200000Z
     |}];
   return ()
 ;;

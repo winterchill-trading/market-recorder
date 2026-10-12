@@ -29,6 +29,9 @@ module Counts : sig
     ; gaps_kept : int (** disconnect lines written: both copies had a gap *)
     ; text_differs : int
     (** pairs matched by venue sequence whose frame texts differ (the earlier is kept) *)
+    ; previous_day : int
+    (** frames of the day's first minute dropped because the previous day's last minute
+        holds them (stamped across midnight on the two collectors) *)
     }
   [@@deriving sexp_of, equal]
 
