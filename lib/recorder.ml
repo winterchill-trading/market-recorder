@@ -36,6 +36,35 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
       (Config.Endpoint.bybit entry.config)
       ~symbols
       ~streams
+  | Okx ->
+    Okx_feed.Live_feed.create ~on_raw (Config.Endpoint.okx entry.config) ~symbols ~streams
+  | Coinbase ->
+    Coinbase_feed.Live_feed.create
+      ~on_raw
+      (Config.Endpoint.coinbase entry.config)
+      ~symbols
+      ~streams
+  | Kraken ->
+    Kraken_feed.Live_feed.create
+      ~on_raw
+      (Config.Endpoint.kraken entry.config)
+      ~symbols
+      ~streams
+  | Deribit ->
+    Deribit_feed.Live_feed.create
+      ~on_raw
+      (Config.Endpoint.deribit entry.config)
+      ~symbols
+      ~streams
+  | Bitget ->
+    Bitget_feed.Live_feed.create
+      ~on_raw
+      (Config.Endpoint.bitget entry.config)
+      ~symbols
+      ~streams
+  | (Nyse | Cboe | Cme) as venue ->
+    (* rejected by [Config.of_sexp] *)
+    raise_s [%message "no live feed" (venue : Market_data.Venue.t)]
 ;;
 
 let start (config : Config.t) =
