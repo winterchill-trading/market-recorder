@@ -54,9 +54,41 @@ let check =
      fun () -> Core.print_s [%sexp (load_config config : Config.t)])
 ;;
 
+let status =
+  Command.async
+    ~summary:"Print a running recorder's /metrics as tables"
+    (let%map_open.Command url =
+       flag
+         "-url"
+         (optional_with_default "http://localhost:9100" string)
+         ~doc:
+           "URL base URL of the recorder's HTTP endpoint (default http://localhost:9100)"
+     in
+     fun () ->
+       let uri =
+         Uri.of_string (String.chop_suffix_if_exists url ~suffix:"/" ^ "/metrics")
+       in
+       let%bind response, body = Cohttp_async.Client.get uri in
+       let%map body = Cohttp_async.Body.to_string body in
+       match Cohttp.Response.status response with
+       | `OK ->
+         (match Status_table.parse body with
+          | Ok samples -> Core.print_string (Status_table.render samples)
+          | Error e ->
+            Core.eprint_s [%sexp (e : Error.t)];
+            Stdlib.exit 1)
+       | status ->
+         Core.eprint_s
+           [%message
+             "unexpected status"
+               ~uri:(Uri.to_string uri)
+               ~status:(Cohttp.Code.string_of_status status)];
+         Stdlib.exit 1)
+;;
+
 let () =
   Command.group
     ~summary:"Raw-first market data recorder"
-    [ "run", run; "check-config", check ]
+    [ "run", run; "check-config", check; "status", status ]
   |> Command_unix.run
 ;;
