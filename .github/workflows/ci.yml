@@ -28,6 +28,11 @@ jobs:
       - run: opam pin add binance-client https://github.com/winterchill-trading/binance-client.git --no-action --yes
       - run: opam pin add bybit-protocol https://github.com/winterchill-trading/bybit-protocol.git --no-action --yes
       - run: opam pin add bybit-client https://github.com/winterchill-trading/bybit-client.git --no-action --yes
+      - run: opam pin add okx-feed https://github.com/winterchill-trading/okx-feed.git --no-action --yes
+      - run: opam pin add coinbase-feed https://github.com/winterchill-trading/coinbase-feed.git --no-action --yes
+      - run: opam pin add kraken-feed https://github.com/winterchill-trading/kraken-feed.git --no-action --yes
+      - run: opam pin add deribit-feed https://github.com/winterchill-trading/deribit-feed.git --no-action --yes
+      - run: opam pin add bitget-feed https://github.com/winterchill-trading/bitget-feed.git --no-action --yes
       - run: opam install . --deps-only --with-test
       - run: opam exec -- dune build
       - run: opam exec -- dune test

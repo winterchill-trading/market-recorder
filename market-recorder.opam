@@ -21,6 +21,11 @@ depends: [
   "hl-client"
   "binance-client"
   "bybit-client"
+  "okx-feed"
+  "coinbase-feed"
+  "kraken-feed"
+  "deribit-feed"
+  "bitget-feed"
   "odoc" {with-doc}
 ]
 build: [

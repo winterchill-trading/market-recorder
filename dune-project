@@ -31,4 +31,9 @@
   market-data
   hl-client
   binance-client
-  bybit-client))
+  bybit-client
+  okx-feed
+  coinbase-feed
+  kraken-feed
+  deribit-feed
+  bitget-feed))
