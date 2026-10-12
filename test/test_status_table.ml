@@ -23,9 +23,9 @@ let%expect_test "metrics text as tables" =
    | Ok samples -> print_string (Status_table.render samples));
   [%expect
     {|
-    venue    stream  symbol   frames  bytes  events  clamped_frames  norm_pipe_length  healthz_flaps  last_frame_age_seconds
-    binance  trades  BTCUSDT       1   1234       1               0                 0              0                   3.500
-    kraken   l2      BTC/USD       0      0       0               0                 0              0                   3.500
+    venue    stream  symbol   frames  bytes  events  clamped_frames  gaps  norm_pipe_length  healthz_flaps  last_frame_age_seconds
+    binance  trades  BTCUSDT       1   1234       1               0     0                 0              0                   3.500
+    kraken   l2      BTC/USD       0      0       0               0     0                 0              0                   3.500
 
     uploads                              12
     upload_failures                      0

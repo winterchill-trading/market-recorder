@@ -44,6 +44,10 @@ let%expect_test "counters, health and exposition" =
     # TYPE market_recorder_clamped_frames_total counter
     market_recorder_clamped_frames_total{venue="hyperliquid",stream="l2",symbol="BTC"} 0
     market_recorder_clamped_frames_total{venue="binance",stream="trades",symbol="BTCUSDT"} 0
+    # HELP market_recorder_gaps_total Gaps the venue client reported (reconnects, resyncs).
+    # TYPE market_recorder_gaps_total counter
+    market_recorder_gaps_total{venue="hyperliquid",stream="l2",symbol="BTC"} 0
+    market_recorder_gaps_total{venue="binance",stream="trades",symbol="BTCUSDT"} 0
     # HELP market_recorder_norm_pipe_length Normalized events waiting in the pipe to the event log writer.
     # TYPE market_recorder_norm_pipe_length gauge
     market_recorder_norm_pipe_length{venue="hyperliquid",stream="l2",symbol="BTC"} 0
@@ -184,6 +188,8 @@ let%expect_test "client counters are summed per venue" =
     # TYPE market_recorder_events_total counter
     # HELP market_recorder_clamped_frames_total Raw frames whose recv_ts went backwards and was raised to the previous one.
     # TYPE market_recorder_clamped_frames_total counter
+    # HELP market_recorder_gaps_total Gaps the venue client reported (reconnects, resyncs).
+    # TYPE market_recorder_gaps_total counter
     # HELP market_recorder_norm_pipe_length Normalized events waiting in the pipe to the event log writer.
     # TYPE market_recorder_norm_pipe_length gauge
     # HELP market_recorder_healthz_flaps_total Times the stream went stale (no frame for 30s) after being fresh.
@@ -235,6 +241,9 @@ let%expect_test "a stream recorded under another one only counts events" =
     # HELP market_recorder_clamped_frames_total Raw frames whose recv_ts went backwards and was raised to the previous one.
     # TYPE market_recorder_clamped_frames_total counter
     market_recorder_clamped_frames_total{venue="hyperliquid",stream="l2",symbol="BTC"} 0
+    # HELP market_recorder_gaps_total Gaps the venue client reported (reconnects, resyncs).
+    # TYPE market_recorder_gaps_total counter
+    market_recorder_gaps_total{venue="hyperliquid",stream="l2",symbol="BTC"} 0
     # HELP market_recorder_norm_pipe_length Normalized events waiting in the pipe to the event log writer.
     # TYPE market_recorder_norm_pipe_length gauge
     market_recorder_norm_pipe_length{venue="hyperliquid",stream="bbo",symbol="BTC"} 0

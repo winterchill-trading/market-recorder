@@ -17,6 +17,7 @@ module Counters = struct
     ; mutable bytes : int
     ; mutable events : int
     ; mutable clamped : int
+    ; mutable gaps : int
     ; mutable pipe_length : unit -> int
     ; mutable stale : bool
     ; mutable flaps : int
@@ -72,6 +73,7 @@ let get t key =
     ; bytes = 0
     ; events = 0
     ; clamped = 0
+    ; gaps = 0
     ; pipe_length = (fun () -> 0)
     ; stale = false
     ; flaps = 0
@@ -100,6 +102,11 @@ let clamp_recv_ts t key recv_ts =
 let event t key =
   let c = get t key in
   c.events <- c.events + 1
+;;
+
+let gap t key =
+  let c = get t key in
+  c.gaps <- c.gaps + 1
 ;;
 
 let set_pipe_length t key f = (get t key).pipe_length <- f
@@ -255,6 +262,12 @@ let render t =
     ~type_:"counter"
     ~help:"Raw frames whose recv_ts went backwards and was raised to the previous one."
     (fun c -> Int.to_string c.clamped);
+  family
+    ~raw_only:true
+    "market_recorder_gaps_total"
+    ~type_:"counter"
+    ~help:"Gaps the venue client reported (reconnects, resyncs)."
+    (fun c -> Int.to_string c.gaps);
   family
     "market_recorder_norm_pipe_length"
     ~type_:"gauge"
