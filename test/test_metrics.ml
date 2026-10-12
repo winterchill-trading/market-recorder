@@ -149,3 +149,59 @@ let%expect_test "healthz flaps count fresh to stale transitions" =
     |}];
   return ()
 ;;
+
+let%expect_test "client counters are summed per venue" =
+  let t = Metrics.create ~now:(fun () -> time "2026-10-12T09:00:00Z") () in
+  print_s
+    [%sexp (Metrics.feed_stats t : (Market_data.Venue.t * Metrics.Feed_stats.t) list)];
+  [%expect {| () |}];
+  let fake ~frames ~parse_errors ~reconnects =
+    let stats = ref { Metrics.Feed_stats.frames; parse_errors; reconnects } in
+    stats, fun () -> !stats
+  in
+  let btc, btc_source = fake ~frames:10 ~parse_errors:1 ~reconnects:0 in
+  let _eth, eth_source = fake ~frames:5 ~parse_errors:0 ~reconnects:2 in
+  let _hl, hl_source = fake ~frames:7 ~parse_errors:0 ~reconnects:0 in
+  Metrics.add_feed_stats_source t ~venue:Okx btc_source;
+  Metrics.add_feed_stats_source t ~venue:Okx eth_source;
+  Metrics.add_feed_stats_source t ~venue:Hyperliquid hl_source;
+  btc := { !btc with parse_errors = 3; reconnects = 1 };
+  print_s
+    [%sexp (Metrics.feed_stats t : (Market_data.Venue.t * Metrics.Feed_stats.t) list)];
+  [%expect
+    {|
+    ((Hyperliquid ((frames 7) (parse_errors 0) (reconnects 0)))
+     (Okx ((frames 15) (parse_errors 3) (reconnects 3))))
+    |}];
+  print_string (Metrics.render t);
+  [%expect
+    {|
+    # HELP market_recorder_frames_total Raw frames received.
+    # TYPE market_recorder_frames_total counter
+    # HELP market_recorder_bytes_total Bytes of raw frames received.
+    # TYPE market_recorder_bytes_total counter
+    # HELP market_recorder_events_total Normalized events written.
+    # TYPE market_recorder_events_total counter
+    # HELP market_recorder_clamped_frames_total Raw frames whose recv_ts went backwards and was raised to the previous one.
+    # TYPE market_recorder_clamped_frames_total counter
+    # HELP market_recorder_norm_pipe_length Normalized events waiting in the pipe to the event log writer.
+    # TYPE market_recorder_norm_pipe_length gauge
+    # HELP market_recorder_healthz_flaps_total Times the stream went stale (no frame for 30s) after being fresh.
+    # TYPE market_recorder_healthz_flaps_total counter
+    # HELP market_recorder_last_frame_age_seconds Seconds since the last raw frame (since start if none yet).
+    # TYPE market_recorder_last_frame_age_seconds gauge
+    # HELP market_recorder_client_frames_total Websocket text frames the venue clients received, acks included.
+    # TYPE market_recorder_client_frames_total counter
+    market_recorder_client_frames_total{venue="hyperliquid"} 7
+    market_recorder_client_frames_total{venue="okx"} 15
+    # HELP market_recorder_parse_errors_total Frames the venue clients dropped as undecodable or error responses.
+    # TYPE market_recorder_parse_errors_total counter
+    market_recorder_parse_errors_total{venue="hyperliquid"} 0
+    market_recorder_parse_errors_total{venue="okx"} 3
+    # HELP market_recorder_reconnects_total Successful websocket reconnections of the venue clients.
+    # TYPE market_recorder_reconnects_total counter
+    market_recorder_reconnects_total{venue="hyperliquid"} 0
+    market_recorder_reconnects_total{venue="okx"} 3
+    |}];
+  return ()
+;;
