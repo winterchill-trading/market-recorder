@@ -82,7 +82,18 @@ let start (config : Config.t) =
     Log.Global.info_s
       [%message
         "compressed files left by an earlier run" ~count:(List.length recovered : int)];
-  let raw = Raw_writer.create ~data_dir ~on_closed () in
+  let warnings = Warnings.create () in
+  let raw =
+    Raw_writer.create
+      ~data_dir
+      ~on_closed
+      ~on_error:(fun ~venue ~stream ~symbol error ->
+        Warnings.warn
+          warnings
+          { venue; stream; symbol }
+          [%message "raw writer failed" (error : Error.t)])
+      ()
+  in
   let norm = Norm_writer.create ~data_dir () in
   let metrics = Metrics.create () in
   Metrics.set_flush_error_source metrics (fun () -> Raw_writer.last_error raw);
@@ -97,7 +108,15 @@ let start (config : Config.t) =
         List.iter entry.streams ~f:(fun stream -> Metrics.register metrics (key stream));
         let on_raw ~stream ~recv_ts frame =
           let key = key stream in
-          let recv_ts = Metrics.clamp_recv_ts metrics key recv_ts in
+          let clamped = Metrics.clamp_recv_ts metrics key recv_ts in
+          if not (Time_ns.equal clamped recv_ts)
+          then
+            Warnings.warn
+              warnings
+              key
+              [%message
+                "recv_ts went backwards" (recv_ts : Time_ns.t) (clamped : Time_ns.t)];
+          let recv_ts = clamped in
           Hash_set.add seen key;
           Metrics.frame metrics key ~recv_ts ~bytes:(String.length frame);
           Raw_writer.write raw ~venue:entry.venue ~stream ~symbol ~recv_ts frame
