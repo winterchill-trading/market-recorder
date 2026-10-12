@@ -1,0 +1,7 @@
+(executable
+ (name main)
+ (public_name market-recorder)
+ (package market-recorder)
+ (libraries core core_unix.command_unix async market-recorder)
+ (preprocess
+  (pps ppx_jane)))
