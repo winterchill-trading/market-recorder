@@ -1,0 +1,13 @@
+(executable
+ (name bench)
+ (libraries
+  core
+  core_unix
+  core_unix.command_unix
+  async
+  market-data
+  binance-protocol
+  binance-client
+  market-recorder)
+ (preprocess
+  (pps ppx_jane)))
