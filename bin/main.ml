@@ -37,6 +37,9 @@ let run =
        let%bind recorder = Recorder.start ?collector config in
        let clock_error = Clock_error.start () in
        Clock_error.register clock_error (Recorder.metrics recorder);
+       let cycles = Cycle_monitor.create () in
+       Cycle_monitor.register cycles (Recorder.metrics recorder);
+       Cycle_monitor.start cycles;
        let%bind server =
          Http_server.start
            ~port:config.http_port

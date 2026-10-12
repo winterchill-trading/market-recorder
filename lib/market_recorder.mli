@@ -32,3 +32,6 @@ module Raw_files = Raw_files
 
 (** The host clock error bound from chrony. *)
 module Clock_error = Clock_error
+
+(** Long Async cycles counted and warned about. *)
+module Cycle_monitor = Cycle_monitor

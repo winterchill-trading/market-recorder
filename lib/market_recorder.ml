@@ -15,3 +15,4 @@ module Seq_gaps = Seq_gaps
 module Silence = Silence
 module Raw_files = Raw_files
 module Clock_error = Clock_error
+module Cycle_monitor = Cycle_monitor
