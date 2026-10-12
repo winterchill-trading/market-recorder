@@ -37,7 +37,7 @@ sleep 3
 "$build/default/market-recorder/bin/main.exe" run -config "$here/examples/sims.sexp" \
   2>"$out/logs/recorder.log" &
 recorder=$!
-pids+=($recorder)
+pids+=("$recorder")
 sleep "$seconds"
 
 echo "== /healthz"
@@ -55,6 +55,6 @@ echo "== files"
 echo "== remote"
 (cd "$out/remote" && find . -type f | sort)
 for f in $(find "$out/data/raw" -name '*.zst' | sort | head -3); do
-  echo "== zstd -dc ${f#$out/data/} | head -2"
+  echo "== zstd -dc ${f#"$out"/data/} | head -2"
   zstd -dc "$f" | head -2 | cut -c1-200
 done
