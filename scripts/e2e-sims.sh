@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Records the three simulators for a while with examples/sims.sexp, checks the output
 # and stops everything. Run from the repo inside the multi-repo dune workspace (or set
-# WORKSPACE to another workspace root holding the simulators and this repo).
+# WORKSPACE to another workspace root holding the simulators and this repo; OPAM_SWITCH
+# names the opam switch, 5.2.0+ox by default; CI passes its local switch).
 #
 # Fails (exit 1) when /healthz is not 200, a configured stream received no frame, an
 # upload failed or is still pending, the recorder exits non-zero, or a stream has no
@@ -12,6 +13,7 @@ seconds=${1:-20}
 here=$(cd "$(dirname "$0")/.." && pwd)
 root=${WORKSPACE:-$(cd "$here/.." && pwd)}
 build=${DUNE_BUILD_DIR:-$root/_build}
+switch=${OPAM_SWITCH:-5.2.0+ox}
 out=/tmp/market-recorder-sims
 port=9910
 
@@ -22,7 +24,7 @@ for p in 3510 3520 3530 $port; do
   fi
 done
 
-(cd "$root" && opam exec --switch 5.2.0+ox -- dune build --root . \
+(cd "$root" && opam exec --switch "$switch" -- dune build --root . \
   ./hl-sim/bin/main.exe ./binance-sim/bin/main.exe ./bybit-sim/bin/main.exe \
   ./market-recorder/bin/main.exe)
 recorder_exe=$build/default/market-recorder/bin/main.exe
