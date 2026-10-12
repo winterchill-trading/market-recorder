@@ -12,6 +12,7 @@ daily `Market_data.Event_log` files that the `market-data` tools read.
 ```
 market-recorder run -config recorder.sexp
 market-recorder check-config -config recorder.sexp
+market-recorder status -url http://localhost:9100     # /metrics of a running recorder as tables
 ```
 
 `SIGTERM` or `SIGINT` flushes everything, closes the feeds, writes a disconnect line to
@@ -41,6 +42,14 @@ Minutes and days are UTC, taken from the receive time.
   recording starts. If the `.zst` of that minute already exists (a restart within the
   same minute), the new zstd frame is appended; `zstd -d` reads concatenated frames as
   one stream.
+- Receive times never go backwards within a stream: a frame stamped earlier than the
+  previous frame of its venue/stream/symbol (the wall clock stepped back) gets the
+  previous time, and is counted in `market_recorder_clamped_frames_total`.
+- A minute file that cannot be opened, written or compressed (disk full, permissions)
+  does not stop the recorder: its lines are dropped, the failure shows on `/healthz` and
+  is logged.
+- Repeated warnings of one stream (raw writer failures, clamped receive times) are logged
+  at most once a minute, with the number suppressed since the last line.
 - One live feed is opened per venue entry and symbol, so every frame is known to belong
   to one symbol. Subscription acks and pongs that the client passes to `on_raw` are
   recorded too, as Tardis does.
