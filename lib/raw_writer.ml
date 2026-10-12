@@ -22,7 +22,7 @@ let safe_symbol symbol =
     | c -> c)
 ;;
 
-let path ~data_dir ~venue ~stream ~symbol time =
+let path ?collector ~data_dir ~venue ~stream ~symbol time =
   let date, (p : Time_ns.Span.Parts.t) = parts time in
   String.concat
     ~sep:"/"
@@ -34,7 +34,11 @@ let path ~data_dir ~venue ~stream ~symbol time =
     ; sprintf "%04d" (Date.year date)
     ; sprintf "%02d" (Month.to_int (Date.month date))
     ; sprintf "%02d" (Date.day date)
-    ; sprintf "%02d-%02d.ndjson" p.hr p.min
+    ; sprintf
+        "%02d-%02d%s.ndjson"
+        p.hr
+        p.min
+        (Option.value_map collector ~default:"" ~f:(fun c -> "." ^ c))
     ]
 ;;
 
@@ -75,6 +79,7 @@ let close_timeout = Time_ns.Span.of_sec 5.
 
 type t =
   { data_dir : string
+  ; collector : string option
   ; now : unit -> Time_ns.t
   ; on_closed : string -> unit
   ; on_error :
@@ -145,7 +150,13 @@ let finish t (file : File.t) =
 
 let open_file t (key : Key.t) time =
   let path =
-    path ~data_dir:t.data_dir ~venue:key.venue ~stream:key.stream ~symbol:key.symbol time
+    path
+      ?collector:t.collector
+      ~data_dir:t.data_dir
+      ~venue:key.venue
+      ~stream:key.stream
+      ~symbol:key.symbol
+      time
   in
   let writer =
     match%map
@@ -230,12 +241,14 @@ let create
   ?(flush_interval = Time_ns.Span.of_int_ms 250)
   ?(now = Time_ns.now)
   ?(on_error = fun ~venue:_ ~stream:_ ~symbol:_ _ -> ())
+  ?collector
   ~data_dir
   ~on_closed
   ()
   =
   let t =
     { data_dir
+    ; collector
     ; now
     ; on_closed
     ; on_error

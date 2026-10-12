@@ -13,3 +13,4 @@ module Raw_merge = Raw_merge
 module Venue_seq = Venue_seq
 module Seq_gaps = Seq_gaps
 module Silence = Silence
+module Raw_files = Raw_files

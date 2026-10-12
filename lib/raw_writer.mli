@@ -7,6 +7,9 @@
 
     {v <data_dir>/raw/<venue>/<stream>/<symbol>/<YYYY>/<MM>/<DD>/<HH>-<MM>.ndjson v}
 
+    With a [collector] id the name is [<HH>-<MM>.<collector>.ndjson], so two collectors
+    recording the same venue never write the same object ({!Raw_files} reads both forms).
+
     Lines are buffered in memory and handed to the OS every [flush_interval] (default
     250ms) or when a buffer passes 1 MiB. When a minute is over (a frame of a later minute
     arrives, or the periodic tick sees the wall clock past it) the file is closed,
@@ -28,6 +31,7 @@ val create
         -> symbol:string
         -> Error.t
         -> unit)
+  -> ?collector:string (** checked with {!Raw_files.check_collector} by the caller *)
   -> data_dir:string
   -> on_closed:(string -> unit)
   -> unit
@@ -79,7 +83,8 @@ val recover : data_dir:string -> on_closed:(string -> unit) -> string list Defer
 
 (** [path ~data_dir ~venue ~stream ~symbol minute] is the plain file holding [minute]. *)
 val path
-  :  data_dir:string
+  :  ?collector:string
+  -> data_dir:string
   -> venue:Market_data.Venue.t
   -> stream:Market_data.Stream.t
   -> symbol:string

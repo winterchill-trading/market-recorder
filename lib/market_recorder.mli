@@ -26,3 +26,6 @@ module Seq_gaps = Seq_gaps
 
 (** Suspected gaps from silence on a stream that normally ticks. *)
 module Silence = Silence
+
+(** Raw minute files with an optional collector id in the name. *)
+module Raw_files = Raw_files
