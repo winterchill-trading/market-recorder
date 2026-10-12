@@ -31,6 +31,7 @@ jobs:
             bitget-feed https://github.com/winterchill-trading/bitget-feed.git
       - run: opam exec -- dune build
       - run: opam exec -- dune test
+      - run: MARKET_RECORDER=_build/default/bin/main.exe scripts/test-replicate-day.sh
   alert-rules:
     runs-on: ubuntu-latest
     steps:
