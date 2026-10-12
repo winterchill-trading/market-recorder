@@ -1,0 +1,17 @@
+(library
+ (name market_recorder_test)
+ (libraries
+  core
+  core_unix
+  async
+  uri
+  market-recorder
+  market-data
+  hl-client
+  binance-client
+  bybit-client)
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (preprocess
+  (pps ppx_jane)))
