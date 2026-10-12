@@ -17,6 +17,6 @@ val start : Config.t -> t Deferred.t
 val metrics : t -> Metrics.t
 
 (** Closes the feeds, writes a disconnect line to every stream that received data,
-    compresses the open minutes, closes the event logs and saves the upload queue.
-    Idempotent. *)
+    compresses the open minutes, closes the event logs, gives pending uploads up to 10s
+    and saves the rest of the upload queue. Idempotent. *)
 val stop : t -> unit Deferred.t

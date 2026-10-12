@@ -108,7 +108,12 @@ let stop_now t =
   let%bind () = Norm_writer.close t.norm in
   match t.uploader with
   | None -> return ()
-  | Some u -> Uploader.close u
+  | Some u ->
+    (* give the files of the last minutes a chance to go out; the rest is saved *)
+    let%bind (_ : unit Clock_ns.Or_timeout.t) =
+      Clock_ns.with_timeout (Time_ns.Span.of_sec 10.) (Uploader.idle u)
+    in
+    Uploader.close u
 ;;
 
 let stop t =
