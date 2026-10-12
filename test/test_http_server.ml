@@ -109,3 +109,40 @@ let%expect_test "healthz reports the last raw writer failure and its age" =
     |}];
   return ()
 ;;
+
+let%expect_test "status sexp" =
+  let now = ref (time "2026-10-12T09:00:00Z") in
+  let metrics = Metrics.create ~now:(fun () -> !now) () in
+  let key : Metrics.Key.t = { venue = Bitget; stream = Bbo; symbol = "BTCUSDT" } in
+  Metrics.register metrics key;
+  Metrics.frame metrics key ~recv_ts:!now ~bytes:42;
+  now := time "2026-10-12T09:00:02Z";
+  let status () =
+    [%sexp
+      ({ open_minute_files = [ "raw/bitget/bbo/BTCUSDT/2026/10/12/09-00.ndjson" ]
+       ; pending_uploads = [ "raw/bitget/bbo/BTCUSDT/2026/10/12/08-59.ndjson.zst" ]
+       ; streams = Metrics.streams metrics
+       }
+       : Recorder.Status.t)]
+  in
+  let show path =
+    let { Http_server.Response.status; body; _ } =
+      Http_server.respond ~status metrics ~path
+    in
+    printf "%d\n%s" (Cohttp.Code.code_of_status status) body
+  in
+  show "/status";
+  [%expect
+    {|
+    200
+    ((open_minute_files (raw/bitget/bbo/BTCUSDT/2026/10/12/09-00.ndjson))
+     (pending_uploads (raw/bitget/bbo/BTCUSDT/2026/10/12/08-59.ndjson.zst))
+     (streams
+      (((key ((venue Bitget) (stream Bbo) (symbol BTCUSDT))) (frames 1)
+        (bytes 42) (events 0) (clamped 0) (flaps 0) (last_frame_age 2s)))))
+    |}];
+  let { Http_server.Response.status; _ } = Http_server.respond metrics ~path:"/status" in
+  print_s [%sexp (Cohttp.Code.code_of_status status : int)];
+  [%expect {| 404 |}];
+  return ()
+;;
