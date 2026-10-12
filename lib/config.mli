@@ -24,13 +24,32 @@ module Endpoint : sig
     | Custom of
         { base_url : string
         ; ws_url : string option [@sexp.option]
-        (** derived from [base_url] by the client when absent *)
+        (** derived from [base_url] by the client when absent; the websocket-only venues
+            (OKX, Coinbase, Kraken spot, Deribit, Bitget) connect to [ws_url] when given
+            and to [base_url] otherwise *)
+        ; futures_ws_url : string option [@sexp.option]
+        (** Kraken only: the futures websocket that carries funding (mainnet when absent) *)
         }
   [@@deriving sexp, compare, equal]
+
+  (** Why a venue cannot use this endpoint, e.g. [Local] for a venue without a simulator,
+      [Testnet] for a venue without a public testnet, or any endpoint of a venue with no
+      live feed. *)
+  val problem : t -> Market_data.Venue.t -> string option
 
   val hyperliquid : t -> Hl_client.Config.t
   val binance : t -> Binance_client.Config.t
   val bybit : t -> Bybit_client.Config.t
+
+  (** The functions below raise when {!problem} is [Some _]; {!Config.of_sexp} rejects
+      those combinations. [Testnet] is the demo trading endpoint on OKX and
+      [test.deribit.com] on Deribit. *)
+
+  val okx : t -> Okx_feed.Config.t
+  val coinbase : t -> Coinbase_feed.Config.t
+  val kraken : t -> Kraken_feed.Config.t
+  val deribit : t -> Deribit_feed.Config.t
+  val bitget : t -> Bitget_feed.Config.t
 end
 
 module Venue_entry : sig
