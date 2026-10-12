@@ -62,19 +62,29 @@ end
 
 module File = struct
   type t =
-    { path : string
+    { key : Key.t
+    ; path : string
     ; minute : Int63.t
-    ; writer : Writer.t Deferred.t
+    ; writer : Writer.t option Deferred.t (** [None] if the file could not be opened *)
     ; buffer : Buffer.t
     }
 end
 
 let flush_bytes = 1 lsl 20
+let close_timeout = Time_ns.Span.of_sec 5.
 
 type t =
   { data_dir : string
   ; now : unit -> Time_ns.t
   ; on_closed : string -> unit
+  ; on_error :
+      venue:Market_data.Venue.t
+      -> stream:Market_data.Stream.t
+      -> symbol:string
+      -> Error.t
+      -> unit
+  ; mutable last_error : (Error.t * Time_ns.t) option
+  ; mutable error_count : int
   ; files : File.t Hashtbl.M(Key).t
   ; stop : unit Ivar.t
   ; mutable closing : unit Deferred.t list
@@ -91,10 +101,20 @@ let open_files t =
    instead raced with [finish]: handlers of one ivar run in no fixed order, so
    [Writer.close] could start before a pending [Writer.write], which then hit the closed
    descriptor ([EBADF] from [fcntl]). *)
+let last_error t = t.last_error
+let error_count t = t.error_count
+
+let record_error t ({ venue; stream; symbol } : Key.t) error =
+  t.error_count <- t.error_count + 1;
+  t.last_error <- Some (error, t.now ());
+  t.on_error ~venue ~stream ~symbol error
+;;
+
 let write_out (file : File.t) =
   match Deferred.peek file.writer with
   | None -> ()
-  | Some w ->
+  | Some None -> Buffer.clear file.buffer
+  | Some (Some w) ->
     if Buffer.length file.buffer > 0
     then (
       Writer.write w (Buffer.contents file.buffer);
@@ -105,11 +125,18 @@ let write_out (file : File.t) =
    [t.closing] so that [close] can wait for every compression. *)
 let finish t (file : File.t) =
   let d =
-    let%bind w = file.writer in
-    write_out file;
-    let%bind () = Writer.close w in
-    let%map compressed = compress_file file.path in
-    t.on_closed compressed
+    match%bind file.writer with
+    | None -> return ()
+    | Some w ->
+      write_out file;
+      (match%map
+         Monitor.try_with_or_error ~rest:`Log (fun () ->
+           (* a writer that failed never reports flushed; do not wait forever *)
+           let%bind () = Writer.close w ~force_close:(Clock_ns.after close_timeout) in
+           compress_file file.path)
+       with
+       | Ok compressed -> t.on_closed compressed
+       | Error e -> record_error t file.key e)
   in
   t.closing <- d :: t.closing;
   upon d (fun () ->
@@ -121,10 +148,20 @@ let open_file t (key : Key.t) time =
     path ~data_dir:t.data_dir ~venue:key.venue ~stream:key.stream ~symbol:key.symbol time
   in
   let writer =
-    let%bind () = Unix.mkdir ~p:() (Filename.dirname path) in
-    Writer.open_file ~append:true path
+    match%map
+      Monitor.try_with_or_error ~rest:`Log (fun () ->
+        let%bind () = Unix.mkdir ~p:() (Filename.dirname path) in
+        Writer.open_file ~append:true path)
+    with
+    | Ok w ->
+      Monitor.detach_and_iter_errors (Writer.monitor w) ~f:(fun exn ->
+        record_error t key (Error.of_exn exn));
+      Some w
+    | Error e ->
+      record_error t key e;
+      None
   in
-  { File.path; minute = minute_of time; writer; buffer = Buffer.create 4096 }
+  { File.key; path; minute = minute_of time; writer; buffer = Buffer.create 4096 }
 ;;
 
 let file_for t key time =
@@ -169,9 +206,11 @@ let disconnect t ~venue ~stream ~symbol ~recv_ts =
 let flush t =
   Hashtbl.data t.files
   |> Deferred.List.iter ~how:`Parallel ~f:(fun (file : File.t) ->
-    let%bind w = file.writer in
-    write_out file;
-    Writer.flushed w)
+    match%bind file.writer with
+    | None -> return ()
+    | Some w ->
+      write_out file;
+      Writer.flushed_or_failed_unit w)
 ;;
 
 let wait_closing t = Deferred.all_unit t.closing
@@ -190,6 +229,7 @@ let roll t =
 let create
   ?(flush_interval = Time_ns.Span.of_int_ms 250)
   ?(now = Time_ns.now)
+  ?(on_error = fun ~venue:_ ~stream:_ ~symbol:_ _ -> ())
   ~data_dir
   ~on_closed
   ()
@@ -198,6 +238,9 @@ let create
     { data_dir
     ; now
     ; on_closed
+    ; on_error
+    ; last_error = None
+    ; error_count = 0
     ; files = Hashtbl.create (module Key)
     ; stop = Ivar.create ()
     ; closing = []

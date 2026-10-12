@@ -22,6 +22,12 @@ type t
 val create
   :  ?flush_interval:Time_ns.Span.t
   -> ?now:(unit -> Time_ns.t)
+  -> ?on_error:
+       (venue:Market_data.Venue.t
+        -> stream:Market_data.Stream.t
+        -> symbol:string
+        -> Error.t
+        -> unit)
   -> data_dir:string
   -> on_closed:(string -> unit)
   -> unit
@@ -56,6 +62,13 @@ val roll : t -> unit Deferred.t
 
 (** Stops the tick, closes and compresses every open file. Idempotent. *)
 val close : t -> unit Deferred.t
+
+(** The last failure to open, write, close or compress a minute file, and when it happened
+    ([now ()]). Lines of a file that could not be opened are dropped; every failure is
+    also passed to [on_error]. *)
+val last_error : t -> (Error.t * Time_ns.t) option
+
+val error_count : t -> int
 
 (** Plain files currently open, sorted. *)
 val open_files : t -> string list
