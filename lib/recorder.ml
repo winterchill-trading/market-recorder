@@ -122,6 +122,16 @@ let start (config : Config.t) =
           Raw_writer.write raw ~venue:entry.venue ~stream ~symbol ~recv_ts frame
         in
         let%map feed = open_feed entry ~symbol ~on_raw in
+        let (module F : Market_data.Feed.S) = feed in
+        List.iter entry.streams ~f:(fun stream ->
+          let length : Market_data.Stream.t -> unit -> int = function
+            | Trades -> fun () -> Pipe.length F.trades
+            | Bbo -> fun () -> Pipe.length F.bbo
+            | L2 -> fun () -> Pipe.length F.l2
+            | Funding -> fun () -> Pipe.length F.funding
+            | Private -> fun () -> 0
+          in
+          Metrics.set_pipe_length metrics (key stream) (length stream));
         Log.Global.info_s
           [%message
             "recording"
