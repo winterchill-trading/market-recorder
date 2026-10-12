@@ -1,7 +1,8 @@
 # market-recorder
 
-Raw-first market data recorder for Hyperliquid, Binance USD-M and Bybit linear, built on
-the venue clients' live feeds (`hl-client`, `binance-client`, `bybit-client`).
+Raw-first market data recorder for Hyperliquid, Binance USD-M, Bybit linear, OKX,
+Coinbase, Kraken, Deribit and Bitget, built on the venues' live feeds (see
+[Venues](#venues)).
 
 Every websocket frame is written exactly as received, with its receive timestamp, into
 Tardis-style minute files that are compressed with zstd and handed to an upload command
@@ -27,7 +28,9 @@ every stream that received data, compresses the open minutes, gives pending uplo
   upload-pending.sexp                                                  files not yet uploaded
 ```
 
-Venues are `hyperliquid`, `binance`, `bybit`; streams `trades`, `bbo`, `l2`, `funding`.
+Venues are `hyperliquid`, `binance`, `bybit`, `okx`, `coinbase`, `kraken`, `deribit`,
+`bitget`; streams `trades`, `bbo`, `l2`, `funding`. Characters `/`, `\\` and space in a
+symbol become `_` in raw paths (`BTC/USD` is `BTC_USD`).
 Minutes and days are UTC, taken from the receive time.
 
 - Buffered lines go to the OS every 250ms (and when a buffer passes 1 MiB); event logs use
@@ -42,13 +45,43 @@ Minutes and days are UTC, taken from the receive time.
   to one symbol. Subscription acks and pongs that the client passes to `on_raw` are
   recorded too, as Tardis does.
 
+## Venues
+
+| Venue | Feed library | Streams | Symbol convention | Endpoints |
+| --- | --- | --- | --- | --- |
+| `Hyperliquid` | `hl-client` | trades, bbo, l2, funding | coin: `BTC`, `ETH` | Mainnet, Testnet, Local (no funding on the simulator), Custom |
+| `Binance` | `binance-client` | trades, bbo, l2, funding | USD-M perpetual: `BTCUSDT` | Mainnet, Testnet, Local, Custom |
+| `Bybit` | `bybit-client` | trades, bbo, l2, funding | linear perpetual: `BTCUSDT` | Mainnet, Testnet, Local, Custom |
+| `Okx` | `okx-feed` | trades, bbo, l2, funding (`-SWAP` only) | instrument id: `BTC-USDT-SWAP`, spot `BTC-USDT` | Mainnet, Testnet (demo trading), Custom |
+| `Coinbase` | `coinbase-feed` | trades, bbo, l2 (spot, no funding) | product id: `BTC-USD` | Mainnet, Custom |
+| `Kraken` | `kraken-feed` | trades, bbo, l2 (spot v2), funding (futures) | `BTC/USD` or `PF_XBTUSD`; each stream maps it to its API | Mainnet, Custom (+ `futures_ws_url`) |
+| `Deribit` | `deribit-feed` | trades, bbo, l2, funding (`-PERPETUAL` only) | instrument name: `BTC-PERPETUAL`, `ETH-PERPETUAL` | Mainnet, Testnet, Custom |
+| `Bitget` | `bitget-feed` | trades, bbo, l2, funding | USDT futures: `BTCUSDT` | Mainnet, Custom |
+
+`check-config` rejects a stream the venue cannot deliver for the given symbol or
+endpoint (it would hold `/healthz` at 503 forever), an endpoint the venue does not have,
+and the venues that have no live feed (`Nyse`, `Cboe`, `Cme`); it prints the errors and
+exits 1, as `run` does before connecting anything:
+
+```
+$ market-recorder check-config -config bad.sexp
+(bad.sexp
+ ("invalid config"
+  (errors
+   ("coinbase: Funding is not available (spot only, no funding channel)"
+    "okx: Funding needs perpetual swaps (symbols ending in -SWAP), not BTC-USDT"))))
+```
+
+Size units follow the venue: OKX swaps are in contracts, Deribit perpetuals in USD
+notional, the others in base currency.
+
 ## Configuration
 
 ```
 ((data_dir /var/lib/market-recorder)
  (http_port 9100)                                  ; default 9100
  (venues
-  (((venue Binance)                                ; Hyperliquid | Binance | Bybit
+  (((venue Binance)                                ; see Venues
     (symbols (BTCUSDT ETHUSDT))                    ; venue names (BTC on Hyperliquid)
     (streams (Trades Bbo L2 Funding))
     (config Mainnet))                              ; default Mainnet
@@ -64,7 +97,7 @@ Minutes and days are UTC, taken from the receive time.
 | --- | --- |
 | `data_dir` | root of the raw and normalized files |
 | `http_port` | port of `/healthz` and `/metrics` |
-| `venues[].config` | `Mainnet`, `Testnet`, `(Local)` / `(Local (port N))` for a simulator on localhost (default ports 3000, 3300, 3400), or `(Custom (base_url URL) [(ws_url URL)])` |
+| `venues[].config` | `Mainnet`, `Testnet`, `(Local)` / `(Local (port N))` for a simulator on localhost (default ports 3000, 3300, 3400), or `(Custom (base_url URL) [(ws_url URL)] [(futures_ws_url URL)])`; the websocket-only feeds (OKX, Coinbase, Kraken, Deribit, Bitget) connect to `ws_url`, else `base_url`; `futures_ws_url` is Kraken's funding socket |
 | `venues[].streams` | any of `Trades Bbo L2 Funding`; `Private` is rejected |
 | `upload.command` | program and arguments; `{file}` becomes the absolute path of the closed `.zst`, `{rel}` its path relative to `data_dir` |
 | `upload.delete_after_upload` | remove the local file after the command succeeds |
@@ -101,8 +134,8 @@ line; an empty line marks a disconnect. Timestamps carry microseconds
 (`2026-10-12T11:55:46.082768Z`). Tardis groups raw data by exchange and day with all
 channels mixed; here files are split per stream, symbol and minute, so a Tardis-style
 day file of one stream is the concatenation of its minute files in name order
-(`zstd -dc .../12/*.ndjson.zst`). Frames containing newlines (none of the three venues
-sends any) would have them replaced by spaces.
+(`zstd -dc .../12/*.ndjson.zst`). Frames containing newlines (none of the venues sends
+any) would have them replaced by spaces.
 
 ## End to end against the simulators
 
