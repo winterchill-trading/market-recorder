@@ -13,7 +13,7 @@ module Gap : sig
   type t =
     { first_missing : int
     ; last_missing : int
-    ; at : Time_ns.t (** [recv_ts] of the message after the gap *)
+    ; at : Time_ns.Alternate_sexp.t (** [recv_ts] of the message after the gap *)
     }
   [@@deriving sexp_of, equal]
 end

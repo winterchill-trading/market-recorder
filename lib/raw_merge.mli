@@ -62,7 +62,21 @@ module Series : sig
     ; stream : Market_data.Stream.t
     ; symbol_dir : string
     }
-  [@@deriving sexp_of, compare]
+  [@@deriving sexp_of, compare, equal]
+end
+
+(** What the merge found in a series beyond the counts. *)
+module Findings : sig
+  type seq =
+    { gaps : Seq_gaps.Gap.t list
+    (** sequence numbers missing from the merged output: neither copy had them *)
+    ; gaps_a : int (** gaps in copy A alone, filled where B had the messages *)
+    ; gaps_b : int
+    }
+  [@@deriving sexp_of]
+
+  type t = { seq : seq option (** for streams with a venue sequence *) }
+  [@@deriving sexp_of]
 end
 
 module Report : sig
@@ -70,6 +84,7 @@ module Report : sig
     { date : Date.t
     ; window : Time_ns.Span.t
     ; series : (Series.t * Counts.t) list
+    ; findings : (Series.t * Findings.t) list
     ; total : Counts.t
     }
   [@@deriving sexp_of]

@@ -250,11 +250,22 @@ module Series = struct
     ; stream : Market_data.Stream.t
     ; symbol_dir : string
     }
-  [@@deriving sexp_of, compare]
+  [@@deriving sexp_of, compare, equal]
 
   let of_file (f : Raw_minute.File.t) =
     { venue = f.venue; stream = f.stream; symbol_dir = f.symbol_dir }
   ;;
+end
+
+module Findings = struct
+  type seq =
+    { gaps : Seq_gaps.Gap.t list
+    ; gaps_a : int
+    ; gaps_b : int
+    }
+  [@@deriving sexp_of]
+
+  type t = { seq : seq option } [@@deriving sexp_of]
 end
 
 module Report = struct
@@ -262,6 +273,7 @@ module Report = struct
     { date : Date.t
     ; window : Time_ns.Span.t
     ; series : (Series.t * Counts.t) list
+    ; findings : (Series.t * Findings.t) list
     ; total : Counts.t
     }
   [@@deriving sexp_of]
@@ -292,15 +304,39 @@ module Report = struct
       c.text_differs
   ;;
 
+  let ts time = quote (Raw_writer.format_ts time)
+
+  let findings_fields (f : Findings.t) =
+    match f.seq with
+    | None -> ""
+    | Some seq ->
+      sprintf
+        {|, "seq_gaps_a": %d, "seq_gaps_b": %d, "seq_gaps": [%s]|}
+        seq.gaps_a
+        seq.gaps_b
+        (List.map seq.gaps ~f:(fun (g : Seq_gaps.Gap.t) ->
+           sprintf
+             {|{"first_missing": %d, "last_missing": %d, "at": %s}|}
+             g.first_missing
+             g.last_missing
+             (ts g.at))
+         |> String.concat ~sep:", ")
+  ;;
+
   let to_json t =
     let series =
       List.map t.series ~f:(fun ((s : Series.t), c) ->
+        let findings =
+          List.Assoc.find t.findings s ~equal:[%equal: Series.t]
+          |> Option.value_map ~default:"" ~f:findings_fields
+        in
         sprintf
-          {|    {"venue": %s, "stream": %s, "symbol": %s, %s}|}
+          {|    {"venue": %s, "stream": %s, "symbol": %s, %s%s}|}
           (quote (Market_data.Venue.to_string s.venue))
           (quote (Market_data.Stream.to_string s.stream))
           (quote s.symbol_dir)
-          (counts_fields c))
+          (counts_fields c)
+          findings)
     in
     sprintf
       "{\n\
@@ -363,8 +399,23 @@ let run ?(window = default_window) ~a_dir ~b_dir ~out_dir date =
     let%bind result =
       Deferred.Or_error.List.map ~how:`Sequential series ~f:(fun files ->
         let s = fst (key (List.hd_exn files)) in
-        let identity payload =
-          (Venue_seq.of_frame ~venue:s.venue ~stream:s.stream payload).identity
+        let seq payload = Venue_seq.of_frame ~venue:s.venue ~stream:s.stream payload in
+        let identity payload = (seq payload).identity in
+        let trackers =
+          if Venue_seq.has_sequence ~venue:s.venue ~stream:s.stream
+          then
+            Some
+              ( Seq_gaps.create ~reorder:window ()
+              , Seq_gaps.create ~reorder:window ()
+              , Seq_gaps.create ~reorder:window () )
+          else None
+        in
+        let track tracker lines =
+          List.iter lines ~f:(fun (line : Line.t) ->
+            match line with
+            | Disconnect -> ()
+            | Frame { recv_ts; payload } ->
+              Option.iter (seq payload).check ~f:(Seq_gaps.add tracker ~recv_ts))
         in
         let minutes =
           List.group files ~break:(fun x y ->
@@ -389,6 +440,10 @@ let run ?(window = default_window) ~a_dir ~b_dir ~out_dir date =
               let lines, counts, carry =
                 merge_minute ~identity ~window ~minute carry ~a ~b
               in
+              Option.iter trackers ~f:(fun (merged, ta, tb) ->
+                track merged lines;
+                Option.iter a ~f:(track ta);
+                Option.iter b ~f:(track tb));
               List.iter lines ~f:(fun (line : Line.t) ->
                 match line with
                 | Frame { recv_ts; payload } ->
@@ -409,7 +464,17 @@ let run ?(window = default_window) ~a_dir ~b_dir ~out_dir date =
               let%map () = Raw_writer.roll writer in
               Ok (carry, Counts.(total + counts)))
         in
-        s, counts)
+        let findings =
+          { Findings.seq =
+              Option.map trackers ~f:(fun (merged, ta, tb) ->
+                List.iter [ merged; ta; tb ] ~f:Seq_gaps.flush;
+                { Findings.gaps = Seq_gaps.gaps merged
+                ; gaps_a = List.length (Seq_gaps.gaps ta)
+                ; gaps_b = List.length (Seq_gaps.gaps tb)
+                })
+          }
+        in
+        s, counts, findings)
     in
     let%bind () = Raw_writer.close writer in
     match result, !errors with
@@ -417,11 +482,13 @@ let run ?(window = default_window) ~a_dir ~b_dir ~out_dir date =
     | Ok _, (_ :: _ as errors) ->
       Deferred.Or_error.error_s
         [%message "writing merged raw files failed" (errors : Error.t list)]
-    | Ok series, [] ->
+    | Ok results, [] ->
+      let series = List.map results ~f:(fun (s, c, _) -> s, c) in
       let report =
         { Report.date
         ; window
         ; series
+        ; findings = List.map results ~f:(fun (s, _, f) -> s, f)
         ; total =
             List.fold series ~init:Counts.zero ~f:(fun acc (_, c) -> Counts.(acc + c))
         }

@@ -307,12 +307,56 @@ let%expect_test "merge a day of two collectors" =
       "total": {"minutes": 3, "only_a": 0, "only_b": 3, "both": 3, "gaps_closed": 1, "gaps_kept": 0, "text_differs": 0},
       "series": [
         {"venue": "hyperliquid", "stream": "l2", "symbol": "BTC", "minutes": 1, "only_a": 0, "only_b": 0, "both": 1, "gaps_closed": 0, "gaps_kept": 0, "text_differs": 0},
-        {"venue": "binance", "stream": "trades", "symbol": "BTCUSDT", "minutes": 2, "only_a": 0, "only_b": 3, "both": 2, "gaps_closed": 1, "gaps_kept": 0, "text_differs": 0}
+        {"venue": "binance", "stream": "trades", "symbol": "BTCUSDT", "minutes": 2, "only_a": 0, "only_b": 3, "both": 2, "gaps_closed": 1, "gaps_kept": 0, "text_differs": 0, "seq_gaps_a": 0, "seq_gaps_b": 0, "seq_gaps": []}
       ]
     }
     |}];
   let%bind again = Raw_merge.run ~a_dir ~b_dir ~out_dir date in
   print_s [%sexp (Result.is_error again : bool)];
   [%expect {| true |}];
+  return ()
+;;
+
+let agg a =
+  sprintf
+    {|{"stream":"btcusdt@aggTrade","data":{"e":"aggTrade","E":1,"a":%d,"s":"BTCUSDT","p":"1","q":"1","f":1,"l":1,"T":1,"m":false}}|}
+    a
+;;
+
+let%expect_test "sequence gaps: filled from the peer, or listed when both miss them" =
+  let dir = Helpers.temp_dir () in
+  let a_dir = dir ^/ "a"
+  and b_dir = dir ^/ "b" in
+  let trades ~data_dir ids =
+    write_minute
+      ~data_dir
+      ~venue:"binance"
+      ~stream:"trades"
+      ~symbol:"BTCUSDT"
+      ~name:"13-35"
+      (List.map ids ~f:(fun id -> at "35" (sprintf "%02d.000000" id) (agg id)))
+  in
+  (* A misses 3 and 4, B misses 6; nobody has 8 *)
+  let%bind () = trades ~data_dir:a_dir [ 1; 2; 5; 6; 7; 9 ] in
+  let%bind () = trades ~data_dir:b_dir [ 1; 2; 3; 4; 5; 7; 9 ] in
+  let%bind report =
+    Raw_merge.run ~a_dir ~b_dir ~out_dir:(dir ^/ "out") (Date.of_string "2026-10-12")
+  in
+  let report = Or_error.ok_exn report in
+  print_s [%sexp (report.findings : (Raw_merge.Series.t * Raw_merge.Findings.t) list)];
+  [%expect
+    {|
+    ((((venue Binance) (stream Trades) (symbol_dir BTCUSDT))
+      ((seq
+        (((gaps
+           (((first_missing 8) (last_missing 8) (at "2026-10-12 13:35:09Z"))))
+          (gaps_a 2) (gaps_b 2)))))))
+    |}];
+  let%bind json = Reader.file_contents (dir ^/ "out/_merge/2026-10-12.json") in
+  String.split_lines json
+  |> List.filter ~f:(String.is_substring ~substring:"seq_gaps")
+  |> List.iter ~f:print_endline;
+  [%expect
+    {| {"venue": "binance", "stream": "trades", "symbol": "BTCUSDT", "minutes": 1, "only_a": 1, "only_b": 2, "both": 5, "gaps_closed": 0, "gaps_kept": 0, "text_differs": 0, "seq_gaps_a": 2, "seq_gaps_b": 2, "seq_gaps": [{"first_missing": 8, "last_missing": 8, "at": "2026-10-12T13:35:09.000000Z"}]} |}];
   return ()
 ;;

@@ -4,7 +4,7 @@ module Gap = struct
   type t =
     { first_missing : int
     ; last_missing : int
-    ; at : Time_ns.t
+    ; at : Time_ns.Alternate_sexp.t
     }
   [@@deriving sexp_of, equal]
 end
