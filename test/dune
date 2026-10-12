@@ -9,6 +9,7 @@
   zstd
   cohttp
   cohttp-async
+  async_websocket
   market-recorder
   market-data
   hl-client
