@@ -15,7 +15,7 @@
 
 (package
  (name market-recorder)
- (synopsis "Raw-first market data recorder for Hyperliquid, Binance and Bybit")
+ (synopsis "Raw-first market data recorder for crypto venues")
  (depends
   (ocaml
    (>= 5.2))
