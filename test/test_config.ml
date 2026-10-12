@@ -55,8 +55,9 @@ let%expect_test "validation" =
     {|
     ("invalid config"
      (errors
-      ("bybit: no symbols" "bybit: Private streams cannot be recorded"
-       "binance: no streams" "upload: empty command")))
+      ("venues[0] bybit: no symbols"
+       "venues[0] bybit: Private streams cannot be recorded"
+       "venues[1] binance: no streams" "upload: empty command")))
     |}];
   parse {|((data_dir d) (venues ()))|};
   [%expect {| ("invalid config" (errors ("no venues"))) |}]
@@ -125,14 +126,14 @@ let%expect_test "streams and endpoints a venue cannot serve are rejected" =
     {|
     ("invalid config"
      (errors
-      ("coinbase: Funding is not available (spot only, no funding channel)"
-       "okx: Funding needs perpetual swaps (symbols ending in -SWAP), not BTC-USDT"
-       "deribit: Funding needs perpetuals (symbols ending in -PERPETUAL), not BTC-27NOV26"
-       "kraken: XBTUSD has no futures perpetual for Funding"
-       "hyperliquid: Funding is not served by the simulator (Local)"
-       "bitget: endpoint Testnet: no public testnet, use Mainnet or Custom"
-       "okx: endpoint (Local): no simulator, use Mainnet or Custom"
-       "nyse: endpoint Mainnet: no live feed for this venue")))
+      ("venues[0] coinbase: Funding is not available (spot only, no funding channel)"
+       "venues[1] okx: Funding needs perpetual swaps (symbols ending in -SWAP), not BTC-USDT"
+       "venues[2] deribit: Funding needs perpetuals (symbols ending in -PERPETUAL), not BTC-27NOV26"
+       "venues[3] kraken: XBTUSD has no futures perpetual for Funding"
+       "venues[4] hyperliquid: Funding is not served by the simulator (Local)"
+       "venues[5] bitget: endpoint Testnet: no public testnet, use Mainnet or Custom"
+       "venues[6] okx: endpoint (Local): no simulator, use Mainnet or Custom"
+       "venues[7] nyse: endpoint Mainnet: no live feed for this venue")))
     |}]
 ;;
 

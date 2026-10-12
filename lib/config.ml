@@ -200,8 +200,9 @@ let validate t =
   let errors =
     List.concat
       [ (if List.is_empty t.venues then [ "no venues" ] else [])
-      ; List.concat_map t.venues ~f:(fun (v : Venue_entry.t) ->
-          let name = Market_data.Venue.to_string v.venue in
+      ; List.concat_mapi t.venues ~f:(fun i (v : Venue_entry.t) ->
+          (* the index tells apart two entries of one venue *)
+          let name = sprintf "venues[%d] %s" i (Market_data.Venue.to_string v.venue) in
           List.concat
             [ (if List.is_empty v.symbols then [ name ^ ": no symbols" ] else [])
             ; (if List.is_empty v.streams then [ name ^ ": no streams" ] else [])
