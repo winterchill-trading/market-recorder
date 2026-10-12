@@ -118,18 +118,53 @@ shutdown are uploaded by the next run. Normalized event logs are not uploaded.
 ## Monitoring
 
 - `GET /healthz`: `200 ok` when every configured venue/stream/symbol delivered a frame
-  in the last 30s, else `503` with the stale streams as a sexp.
+  in the last 30s and the raw writer has not failed in that time, else `503` with the
+  stale streams as a sexp. The last raw writer failure and its age follow on their own
+  line whenever there was one:
+  `(last_flush_error ((error "...No space left on device...") (age 5s)))`.
 - `GET /metrics`: Prometheus text format.
+- `GET /status`: a sexp of the open minute files, the pending uploads (both relative to
+  `data_dir`) and every stream's counters.
+
+`market-recorder status -url URL` (default `http://localhost:9100`) fetches `/metrics`
+and prints it as one row per stream plus the process gauges:
+
+```
+venue        stream   symbol   frames   bytes  events  clamped_frames  norm_pipe_length  healthz_flaps  last_frame_age_seconds
+binance      bbo      BTCUSDT      82   13633      81               0                 0              0                   0.091
+bybit        trades   BTCUSDT      38   11144      70               0                 0              0                   0.070
+hyperliquid  l2       BTC         182  270819     182               0                 0              0                   0.037
+...
+
+uploads                                     0
+upload_failures                             0
+upload_pending                              0
+build_info{version=unknown,ocaml=5.2.0+ox}  1
+open_fds                                    72
+gc_minor_collections                        8
+gc_major_collections                        4
+gc_compactions                              0
+gc_heap_words                               1181337
+gc_top_heap_words                           410953
+```
 
 | Metric | Labels | |
 | --- | --- | --- |
 | `market_recorder_frames_total` | venue, stream, symbol | raw frames |
 | `market_recorder_bytes_total` | venue, stream, symbol | raw frame bytes |
 | `market_recorder_events_total` | venue, stream, symbol | normalized events |
+| `market_recorder_clamped_frames_total` | venue, stream, symbol | frames whose receive time was raised to the previous one |
+| `market_recorder_norm_pipe_length` | venue, stream, symbol | normalized events waiting for the event log writer |
+| `market_recorder_healthz_flaps_total` | venue, stream, symbol | times the stream went stale after being fresh (seen by `/healthz` or `/metrics` requests) |
 | `market_recorder_last_frame_age_seconds` | venue, stream, symbol | since the last frame (since start if none) |
 | `market_recorder_uploads_total` | | files uploaded |
 | `market_recorder_upload_failures_total` | | failed command runs |
 | `market_recorder_upload_pending` | | files waiting |
+| `market_recorder_build_info` | version, ocaml | always 1; `version` is `git describe` at build time (`unknown` outside a checkout) |
+| `market_recorder_open_fds` | | open file descriptors (`/proc/self/fd` or `/dev/fd`) |
+| `market_recorder_resident_memory_bytes` | | resident set size (Linux only) |
+| `market_recorder_gc_minor_collections_total`, `_gc_major_collections_total`, `_gc_compactions_total` | | GC counters |
+| `market_recorder_gc_heap_words`, `_gc_top_heap_words` | | major heap size, current and peak |
 
 Parse errors and reconnects are handled inside the venue clients (logged, resubscribed)
 and are not visible through the `Market_data.Feed.t` interface, so they are not counted
@@ -306,6 +341,9 @@ under 0.5% of that.
 | `Raw_writer` | minute files, 250ms flush, zstd roll, crash recovery |
 | `Norm_writer` | normalized events into `Market_data.Event_log` |
 | `Uploader` | upload command queue with retries and a persistent pending list |
-| `Metrics` | counters, health rule, Prometheus rendering |
+| `Metrics` | counters, clamping of receive times, health rule and flaps, Prometheus rendering |
 | `Recorder` | feeds per venue and symbol wired to the writers |
-| `Http_server` | `/healthz` and `/metrics` on cohttp-async |
+| `Http_server` | `/healthz`, `/metrics` and `/status` on cohttp-async |
+| `Warnings` | per-stream warnings, at most one line a minute with a suppressed count |
+| `Process_metrics` | build info, open descriptors, RSS and GC gauges |
+| `Status_table` | Prometheus text parser and the tables of `status` |
