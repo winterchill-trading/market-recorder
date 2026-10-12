@@ -23,10 +23,29 @@ module Counters = struct
     }
 end
 
+module Feed_stats = struct
+  type t =
+    { frames : int
+    ; parse_errors : int
+    ; reconnects : int
+    }
+  [@@deriving sexp_of, equal]
+
+  let zero = { frames = 0; parse_errors = 0; reconnects = 0 }
+
+  let ( + ) a b =
+    { frames = a.frames + b.frames
+    ; parse_errors = a.parse_errors + b.parse_errors
+    ; reconnects = a.reconnects + b.reconnects
+    }
+  ;;
+end
+
 type t =
   { now : unit -> Time_ns.t
   ; counters : Counters.t Hashtbl.M(Key).t
   ; mutable upload_source : (unit -> int * int * int) option
+  ; mutable feed_stats_sources : (Market_data.Venue.t * (unit -> Feed_stats.t)) list
   ; mutable flush_error_source : unit -> (Error.t * Time_ns.t) option
   }
 
@@ -34,6 +53,7 @@ let create ?(now = Time_ns.now) () =
   { now
   ; counters = Hashtbl.create (module Key)
   ; upload_source = None
+  ; feed_stats_sources = []
   ; flush_error_source = (fun () -> None)
   }
 ;;
@@ -78,6 +98,19 @@ let event t key =
 let set_pipe_length t key f = (get t key).pipe_length <- f
 let set_upload_source t f = t.upload_source <- Some f
 let set_flush_error_source t f = t.flush_error_source <- f
+
+let add_feed_stats_source t ~venue f =
+  t.feed_stats_sources <- (venue, f) :: t.feed_stats_sources
+;;
+
+let feed_stats t =
+  let sums = Hashtbl.create (module Market_data.Venue) in
+  List.iter t.feed_stats_sources ~f:(fun (venue, f) ->
+    Hashtbl.update sums venue ~f:(fun sum ->
+      Feed_stats.( + ) (Option.value sum ~default:Feed_stats.zero) (f ())));
+  Hashtbl.to_alist sums
+  |> List.sort ~compare:(fun (a, _) (b, _) -> Market_data.Venue.compare a b)
+;;
 
 module Flush_error = struct
   type t =
@@ -215,6 +248,31 @@ let render t =
     ~type_:"gauge"
     ~help:"Seconds since the last raw frame (since start if none yet)."
     (fun c -> sprintf "%.3f" (Time_ns.Span.to_sec (age t c)));
+  let per_venue = feed_stats t in
+  let venue_family name ~help value =
+    if not (List.is_empty per_venue)
+    then (
+      bprintf buf "# HELP %s %s\n# TYPE %s counter\n" name help name;
+      List.iter per_venue ~f:(fun (venue, stats) ->
+        bprintf
+          buf
+          "%s{venue=\"%s\"} %d\n"
+          name
+          (Market_data.Venue.to_string venue)
+          (value stats)))
+  in
+  venue_family
+    "market_recorder_client_frames_total"
+    ~help:"Websocket text frames the venue clients received, acks included."
+    (fun (s : Feed_stats.t) -> s.frames);
+  venue_family
+    "market_recorder_parse_errors_total"
+    ~help:"Frames the venue clients dropped as undecodable or error responses."
+    (fun (s : Feed_stats.t) -> s.parse_errors);
+  venue_family
+    "market_recorder_reconnects_total"
+    ~help:"Successful websocket reconnections of the venue clients."
+    (fun (s : Feed_stats.t) -> s.reconnects);
   Option.iter t.upload_source ~f:(fun f ->
     let uploaded, failures, pending = f () in
     let scalar name ~type_ ~help v =

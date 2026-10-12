@@ -1,8 +1,8 @@
 (** Per venue, stream and symbol counters, rendered in the Prometheus text format, and the
     health rule.
 
-    Parse errors and reconnects are handled inside the venue clients and are not visible
-    through {!Market_data.Feed.t}, so they are not counted here. *)
+    Parse errors and reconnects happen inside the venue clients; each client's counters
+    are read through a {!Feed_stats} source per feed and summed per venue. *)
 
 open! Core
 
@@ -41,6 +41,29 @@ val set_upload_source : t -> (unit -> int * int * int) -> unit
 
 (** Where {!flush_error} reads the last raw writer failure and its time from. *)
 val set_flush_error_source : t -> (unit -> (Error.t * Time_ns.t) option) -> unit
+
+(** The counters a venue client keeps for one feed. *)
+module Feed_stats : sig
+  type t =
+    { frames : int (** websocket text frames received, acks included *)
+    ; parse_errors : int (** frames dropped as undecodable or error responses *)
+    ; reconnects : int (** successful reconnections, the first connection excluded *)
+    }
+  [@@deriving sexp_of, equal]
+
+  val zero : t
+  val ( + ) : t -> t -> t
+end
+
+(** Adds a feed of [venue] whose counters are read from [f] when rendering. *)
+val add_feed_stats_source
+  :  t
+  -> venue:Market_data.Venue.t
+  -> (unit -> Feed_stats.t)
+  -> unit
+
+(** The counters of every venue with a source, summed over its feeds, sorted by venue. *)
+val feed_stats : t -> (Market_data.Venue.t * Feed_stats.t) list
 
 module Flush_error : sig
   type t =
