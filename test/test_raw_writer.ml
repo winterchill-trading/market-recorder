@@ -153,3 +153,35 @@ let%expect_test "close right after the first write keeps the line, 50 times" =
   [%expect {| ("2026-10-12T23:59:59.000000Z x\n") |}];
   return ()
 ;;
+
+let%expect_test "a file that cannot be opened is reported, not raised" =
+  let dir = temp_dir () in
+  (* [raw] is a plain file, so no minute directory can be created under it *)
+  let%bind () = Writer.save (dir ^/ "raw") ~contents:"" in
+  let now = time "2026-10-12T09:15:30Z" in
+  let t =
+    Raw_writer.create
+      ~now:(fun () -> now)
+      ~on_error:(fun ~venue ~stream ~symbol _ ->
+        print_s
+          [%message
+            "on_error"
+              (venue : Market_data.Venue.t)
+              (stream : Market_data.Stream.t)
+              symbol])
+      ~data_dir:dir
+      ~on_closed:ignore
+      ()
+  in
+  Raw_writer.write t ~venue:Okx ~stream:Bbo ~symbol:"BTC-USDT" ~recv_ts:now "x";
+  let%bind () = Raw_writer.flush t in
+  [%expect {| (on_error (venue Okx) (stream Bbo) BTC-USDT) |}];
+  let%bind () = Raw_writer.close t in
+  print_s
+    [%sexp
+      (Raw_writer.error_count t : int)
+      , (Option.map (Raw_writer.last_error t) ~f:snd |> Option.map ~f:Raw_writer.format_ts
+         : string option)];
+  [%expect {| (1 (2026-10-12T09:15:30.000000Z)) |}];
+  return ()
+;;
