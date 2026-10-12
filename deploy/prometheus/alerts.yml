@@ -1,0 +1,25 @@
+# Example Prometheus alerting rules for market-recorder.
+# Load with `rule_files: [alerts.yml]`, or wrap `groups` in a PrometheusRule
+# resource when running the Prometheus operator.
+groups:
+  - name: market-recorder
+    rules:
+      - alert: MarketRecorderParseErrors
+        # Any frame a venue client could not decode, sustained for five minutes:
+        # usually a venue changed its message format.
+        expr: sum by (instance, venue) (rate(market_recorder_parse_errors_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.venue }} frames fail to parse on {{ $labels.instance }}"
+          description: >-
+            {{ $labels.venue }} drops {{ $value | humanize }} frames per second as
+            undecodable. The raw minute files still hold them; check the recorder log
+            and the client's normalizer.
+      - alert: MarketRecorderReconnecting
+        expr: sum by (instance, venue) (increase(market_recorder_reconnects_total[15m])) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.venue }} reconnected {{ $value }} times in 15 minutes on {{ $labels.instance }}"
