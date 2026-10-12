@@ -132,3 +132,24 @@ let%expect_test "a second compression of the same minute appends a frame" =
   [%expect {| (true true) |}];
   return ()
 ;;
+
+let%expect_test "close right after the first write keeps the line, 50 times" =
+  let%bind results =
+    Deferred.List.init ~how:`Sequential 50 ~f:(fun _ ->
+      let dir = temp_dir () in
+      let closed = Queue.create () in
+      let t = Raw_writer.create ~data_dir:dir ~on_closed:(Queue.enqueue closed) () in
+      Raw_writer.write
+        t
+        ~venue:Hyperliquid
+        ~stream:L2
+        ~symbol:"BTC"
+        ~recv_ts:(time "2026-10-12T23:59:59Z")
+        "x";
+      let%bind () = Raw_writer.close t in
+      unzstd (Queue.dequeue_exn closed))
+  in
+  print_s [%sexp (List.dedup_and_sort results ~compare:String.compare : string list)];
+  [%expect {| ("2026-10-12T23:59:59.000000Z x\n") |}];
+  return ()
+;;
