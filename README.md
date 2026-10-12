@@ -14,6 +14,7 @@ market-recorder run -config recorder.sexp
 market-recorder check-config -config recorder.sexp
 market-recorder status -url http://localhost:9100     # /metrics of a running recorder as tables
 market-recorder rebuild-norm -data-dir DIR -out DIR -date YYYY-MM-DD   # norm/ from raw/
+market-recorder merge -a DIR_A -b DIR_B -out DIR -date YYYY-MM-DD      # two collectors into one raw/
 ```
 
 `SIGTERM` or `SIGINT` flushes everything, closes the feeds, writes a disconnect line to
@@ -232,6 +233,64 @@ and Bybit, 40 minute files, 2236 frames, 2545 events) rebuilt all 22 event logs 
 byte identical, with no rejected frames; the only files not reproduced are the 6 L2
 snapshot index files.
 
+## Merging two collectors
+
+Two recorders on the same venues, symbols and streams (two collectors, ideally in two
+regions) each write their own raw minute files. `merge` turns a day of both into one
+canonical copy in the same layout, so every reader (rebuild-norm, day close, replay)
+works on it unchanged:
+
+```
+market-recorder merge -a A_DATA_DIR -b B_DATA_DIR -out NEW_DIR -date 2026-10-12 [-window 5s]
+scripts/replicate-day.sh REMOTE_A REMOTE_B [2026-10-12] [merge flags...]
+```
+
+Per venue, stream, symbol and minute (`Raw_merge.merge_minute`):
+
+- Frames are matched by their text. A frame of copy A and one of copy B with the same
+  text and `recv_ts` at most `-window` apart (default 5 s) are one venue message, written
+  once with the earlier `recv_ts`. Repeated identical frames pair up in time order.
+  Unmatched frames in the last window of a minute are also matched against the next
+  minute of the other copy, so a message stamped 13:35:59.999 on one side and
+  13:36:00.001 on the other is kept once.
+- A disconnect line covers the span from the previous frame of its file (or the start of
+  the minute) to the next frame (or the end of the minute). It is written only when the
+  other copy also has a gap overlapping that span (its own disconnect, or no file for the
+  minute); otherwise the other copy filled it and the line is dropped. Two overlapping
+  disconnects are written once.
+- Lines are ordered by `recv_ts`, copy A first on ties; the output is compressed by the
+  recorder's own `Raw_writer`. The output directory must not hold raw files of that day.
+
+`<out>/_merge/<date>.json` reports per series and in total: `minutes` written, `only_a`
+and `only_b` (frames one copy missed), `both`, `gaps_closed` (disconnect lines the peer
+filled) and `gaps_kept` (gaps both copies had). The command prints the totals.
+
+Not yet implemented from [the replication design][replication]: venue sequence numbers
+(Binance `u`/`pu`, Bybit `u`) as the identity and for exact gap lists, silence-based
+suspected gaps, the clock-error bound (frames closer than both clocks' error are
+ordered by `recv_ts` like any other), the L2 snapshot rule after a fill, and matching
+across the day boundary.
+
+`scripts/replicate-day.sh` fetches one day of both collectors' `raw/` trees with
+`rclone copy --include '/raw/*/*/*/YYYY/MM/DD/**'` into `$WORK/a` and `$WORK/b` (default
+`./replicate/DATE`), merges into `$WORK/out`, copies that to `$DEST` when set, and
+removes the inputs unless `KEEP_INPUT=1`. `REMOTE_A` and `REMOTE_B` are the uploaders'
+destinations without `{rel}`. `$RCLONE` replaces the rclone binary;
+`scripts/test-replicate-day.sh` (run in CI) uses a stand-in that copies local trees.
+
+What infra needs to run it (not done here):
+
+- Each collector uploads under its own prefix or bucket
+  (`rclone copyto {file} s3:bucket/<collector>/{rel}`), so the two copies never share a
+  key.
+- A daily job per venue group, after cross-region replication has delivered the day:
+  `replicate-day.sh s3:bucket/a s3:bucket/b DATE` with `DEST` set to the canonical
+  prefix, then the day close over the merged `raw/` with `-force`.
+- The image needs rclone (already there) and enough scratch space for two copies and
+  the output of one day.
+
+[replication]: https://github.com/winterchill-trading/specs/blob/main/design/cloud-sinks-and-replication.md
+
 ## Tardis compatibility
 
 The raw line format matches the tardis.dev raw data feeds: the local (receive) timestamp
@@ -401,6 +460,21 @@ normalizer is about 60% of the cost. The busiest
 mainnet stream in the 90s run above (Binance `BTCUSDT` bbo, about 1000 frames/s) uses
 under 0.5% of that.
 
+The same bench then merges two copies of the minute (copy B 300 us later, each missing a
+different 1% of the frames), in memory and from compressed files to compressed files:
+
+```
+merge of two copies: 237600 lines in, 1200 only_a, 1200 only_b, 117600 both
+  merge in memory   1463703 frames/s    255.2 MB/s  (162.3ms)
+  merge files        421721 frames/s     73.5 MB/s  (563.4ms)
+merge of two copies: 1188000 lines in, 6000 only_a, 6000 only_b, 588000 both   (10000/s)
+  merge in memory    924538 frames/s    162.2 MB/s  (1.3s)
+  merge files        356860 frames/s     62.6 MB/s  (3.3s)
+```
+
+At about 0.36 to 0.42 M input lines/s, a day of the busiest stream (two copies at
+1000 frames/s, 173 M lines) merges in about 8 minutes on one core.
+
 ## Modules
 
 | Module | |
@@ -416,3 +490,4 @@ under 0.5% of that.
 | `Process_metrics` | build info, open descriptors, RSS and GC gauges |
 | `Status_table` | Prometheus text parser and the tables of `status` |
 | `Rebuild` | `rebuild-norm` over every venue's normalizer, venue filter and skip list |
+| `Raw_merge` | `merge`: two collectors' raw minute files into one canonical copy with a report |
