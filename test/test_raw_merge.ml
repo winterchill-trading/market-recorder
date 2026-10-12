@@ -1,0 +1,150 @@
+(* [Raw_merge] over hand-written minutes of two collectors. *)
+
+open! Core
+open! Async
+open Market_recorder
+module Line = Market_data.Raw_minute.Line
+
+let minute = Helpers.time "2026-10-12T13:35:00Z"
+let window = Time_ns.Span.of_sec 5.
+let lines l = List.map l ~f:(fun s -> Line.parse s |> Or_error.ok_exn)
+let frame sec text = sprintf "2026-10-12T13:35:%sZ %s" sec text
+
+let print_lines l =
+  List.iter l ~f:(fun (line : Line.t) ->
+    match line with
+    | Disconnect -> print_endline "<disconnect>"
+    | Frame { recv_ts; payload } ->
+      printf "%s %s\n" (Raw_writer.format_ts recv_ts) payload)
+;;
+
+let merge ?(carry = Raw_merge.Carry.empty) ?(minute = minute) a b =
+  let lines, counts, carry =
+    Raw_merge.merge_minute
+      ~window
+      ~minute
+      carry
+      ~a:(Option.map a ~f:lines)
+      ~b:(Option.map b ~f:lines)
+  in
+  print_lines lines;
+  print_s [%sexp (counts : Raw_merge.Counts.t)];
+  carry
+;;
+
+let%expect_test "earliest copy of each frame wins" =
+  let (_ : Raw_merge.Carry.t) =
+    merge
+      (Some [ frame "01.000100" "x1"; frame "02.000000" "x2"; frame "04.000000" "x4" ])
+      (Some [ frame "01.000050" "x1"; frame "02.000300" "x2"; frame "03.000000" "x3" ])
+  in
+  [%expect
+    {|
+    2026-10-12T13:35:01.000050Z x1
+    2026-10-12T13:35:02.000000Z x2
+    2026-10-12T13:35:03.000000Z x3
+    2026-10-12T13:35:04.000000Z x4
+    ((minutes 1) (only_a 1) (only_b 1) (both 2) (gaps_closed 0) (gaps_kept 0))
+    |}];
+  return ()
+;;
+
+let%expect_test "repeated frames pair up in time order, outside the window stay apart" =
+  let (_ : Raw_merge.Carry.t) =
+    merge
+      (Some
+         [ frame "01.000000" "same"; frame "02.000000" "same"; frame "30.000000" "same" ])
+      (Some
+         [ frame "01.000010" "same"; frame "02.000010" "same"; frame "40.000000" "same" ])
+  in
+  [%expect
+    {|
+    2026-10-12T13:35:01.000000Z same
+    2026-10-12T13:35:02.000000Z same
+    2026-10-12T13:35:30.000000Z same
+    2026-10-12T13:35:40.000000Z same
+    ((minutes 1) (only_a 1) (only_b 1) (both 2) (gaps_closed 0) (gaps_kept 0))
+    |}];
+  return ()
+;;
+
+let%expect_test "a disconnect the other copy covered is dropped" =
+  let (_ : Raw_merge.Carry.t) =
+    merge
+      (Some [ frame "01.000000" "x1"; ""; frame "09.000000" "x9" ])
+      (Some [ frame "01.000001" "x1"; frame "05.000000" "x5"; frame "09.000001" "x9" ])
+  in
+  [%expect
+    {|
+    2026-10-12T13:35:01.000000Z x1
+    2026-10-12T13:35:05.000000Z x5
+    2026-10-12T13:35:09.000000Z x9
+    ((minutes 1) (only_a 0) (only_b 1) (both 2) (gaps_closed 1) (gaps_kept 0))
+    |}];
+  return ()
+;;
+
+let%expect_test "overlapping disconnects stay as one gap" =
+  let (_ : Raw_merge.Carry.t) =
+    merge
+      (Some [ frame "01.000000" "x1"; ""; frame "09.000000" "x9" ])
+      (Some
+         [ frame "01.000001" "x1"; frame "03.000000" "x3"; ""; frame "20.000000" "x20" ])
+  in
+  [%expect
+    {|
+    2026-10-12T13:35:01.000000Z x1
+    <disconnect>
+    2026-10-12T13:35:03.000000Z x3
+    2026-10-12T13:35:09.000000Z x9
+    2026-10-12T13:35:20.000000Z x20
+    ((minutes 1) (only_a 1) (only_b 2) (both 1) (gaps_closed 1) (gaps_kept 1))
+    |}];
+  return ()
+;;
+
+let%expect_test "a missing file is a gap over the whole minute" =
+  let (_ : Raw_merge.Carry.t) =
+    merge (Some [ frame "01.000000" "x1"; ""; frame "09.000000" "x9" ]) None
+  in
+  [%expect
+    {|
+    2026-10-12T13:35:01.000000Z x1
+    <disconnect>
+    2026-10-12T13:35:09.000000Z x9
+    ((minutes 1) (only_a 2) (only_b 0) (both 0) (gaps_closed 0) (gaps_kept 1))
+    |}];
+  let (_ : Raw_merge.Carry.t) = merge None (Some [ ""; frame "09.000000" "x9" ]) in
+  [%expect
+    {|
+    <disconnect>
+    2026-10-12T13:35:09.000000Z x9
+    ((minutes 1) (only_a 0) (only_b 1) (both 0) (gaps_closed 0) (gaps_kept 1))
+    |}];
+  return ()
+;;
+
+let%expect_test "a frame stamped on both sides of a minute boundary is kept once" =
+  let carry =
+    merge (Some [ frame "59.999000" "edge" ]) (Some [ frame "30.000000" "early" ])
+  in
+  [%expect
+    {|
+    2026-10-12T13:35:30.000000Z early
+    2026-10-12T13:35:59.999000Z edge
+    ((minutes 1) (only_a 1) (only_b 1) (both 0) (gaps_closed 0) (gaps_kept 0))
+    |}];
+  let (_ : Raw_merge.Carry.t) =
+    merge
+      ~carry
+      ~minute:(Helpers.time "2026-10-12T13:36:00Z")
+      (Some [ "2026-10-12T13:36:01.000000Z next" ])
+      (Some [ "2026-10-12T13:36:00.001000Z edge"; "2026-10-12T13:36:01.000002Z next" ])
+  in
+  [%expect
+    {|
+    2026-10-12T13:36:01.000000Z next
+    ((minutes 1) (only_a -1) (only_b 0) (both 2) (gaps_closed 0) (gaps_kept 0))
+    |}];
+  return ()
+;;
