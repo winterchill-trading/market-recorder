@@ -179,7 +179,7 @@ let has_raw_frames (entry : Config.Venue_entry.t) (stream : Market_data.Stream.t
   | _ -> true
 ;;
 
-let start (config : Config.t) =
+let start ?collector (config : Config.t) =
   let data_dir = config.data_dir in
   let%bind () = Unix.mkdir ~p:() data_dir in
   let%bind uploader =
@@ -197,6 +197,7 @@ let start (config : Config.t) =
   let warnings = Warnings.create () in
   let raw =
     Raw_writer.create
+      ?collector
       ~data_dir
       ~on_closed
       ~on_error:(fun ~venue ~stream ~symbol error ->

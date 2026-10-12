@@ -16,11 +16,18 @@ let run =
     ~summary:"Record the configured venues until SIGTERM or SIGINT"
     (let%map_open.Command config =
        flag "-config" (required string) ~doc:"FILE recorder configuration (sexp)"
+     and collector =
+       flag
+         "-collector"
+         (optional Raw_files.collector_arg)
+         ~doc:
+           "ID add this collector id to raw minute file names (<HH>-<MM>.<ID>.ndjson), \
+            for two collectors of one venue"
      in
      fun () ->
        Log.Global.set_output [ Log.Output.stderr () ];
        let config = load_config config in
-       let%bind recorder = Recorder.start config in
+       let%bind recorder = Recorder.start ?collector config in
        let%bind server =
          Http_server.start
            ~port:config.http_port

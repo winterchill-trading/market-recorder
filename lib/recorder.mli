@@ -12,7 +12,10 @@ type t
 
 (** Compresses plain files left by an earlier run, then connects every feed. Fails if a
     first connection fails. *)
-val start : Config.t -> t Deferred.t
+val start
+  :  ?collector:string (** collector id in raw file names, see {!Raw_writer} *)
+  -> Config.t
+  -> t Deferred.t
 
 val metrics : t -> Metrics.t
 
