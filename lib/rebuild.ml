@@ -87,7 +87,64 @@ let with_view ~data_dir ~skip f =
         f view)
 ;;
 
-let run ?venues ?(skip = []) ~data_dir ~out_dir date =
+(* [f] over a directory holding one collector's minute files of [date] under their plain
+   names, as symlinks; again only what was made here is removed afterwards. *)
+let with_collector_view ~data_dir ~collector ~skip date f =
+  let%bind files = Raw_files.files ~collector ~data_dir date in
+  let files =
+    List.filter files ~f:(fun (file : Market_data.Raw_minute.File.t) ->
+      not
+        (List.mem
+           skip
+           { Skip.venue = file.venue; stream = file.stream }
+           ~equal:Skip.equal))
+  in
+  let%bind view = Unix.mkdtemp (Filename.temp_dir_name ^/ "rebuild-norm") in
+  let links = ref []
+  and dirs = String.Hash_set.create () in
+  Monitor.protect
+    ~finally:(fun () ->
+      let%bind () = Deferred.List.iter !links ~how:`Sequential ~f:Unix.unlink in
+      (* deepest first *)
+      let dirs =
+        view :: Hash_set.to_list dirs
+        |> List.sort ~compare:(fun a b -> Int.compare (String.length b) (String.length a))
+      in
+      Deferred.List.iter dirs ~how:`Sequential ~f:(fun dir ->
+        Monitor.try_with (fun () -> Unix.rmdir dir) |> Deferred.ignore_m))
+    (fun () ->
+      let%bind () =
+        Deferred.List.iter files ~how:`Sequential ~f:(fun file ->
+          let%bind target = In_thread.run (fun () -> Filename_unix.realpath file.path) in
+          let parts = String.split file.path ~on:'/' |> List.rev in
+          match parts, Raw_files.parse_name (List.hd_exn parts) with
+          | _ :: dd :: mm :: yyyy :: symbol :: stream :: venue :: _, Some (_, plain) ->
+            let rec mkdirs = function
+              | [] -> return ()
+              | rel :: rest ->
+                let dir = view ^/ rel in
+                if Hash_set.mem dirs dir
+                then mkdirs rest
+                else (
+                  let%bind () = Unix.mkdir ~p:() dir in
+                  Hash_set.add dirs dir;
+                  mkdirs rest)
+            in
+            let path = [ "raw"; venue; stream; symbol; yyyy; mm; dd ] in
+            let%bind () =
+              mkdirs
+                (List.init (List.length path) ~f:(fun i ->
+                   String.concat ~sep:"/" (List.take path (i + 1))))
+            in
+            let link_name = view ^/ String.concat ~sep:"/" path ^/ plain in
+            let%map () = Unix.symlink ~target ~link_name in
+            links := link_name :: !links
+          | _ -> return ())
+      in
+      f view)
+;;
+
+let run ?venues ?(skip = []) ?collector ~data_dir ~out_dir date =
   let normalizers =
     match venues with
     | None -> normalizers
@@ -95,8 +152,12 @@ let run ?venues ?(skip = []) ~data_dir ~out_dir date =
       List.filter normalizers ~f:(fun n ->
         List.mem venues (Market_data.Normalizer.venue n) ~equal:Venue.equal)
   in
-  with_view ~data_dir ~skip (fun data_dir ->
-    Market_data.Rebuild_norm.run ~normalizers ~data_dir ~out_dir date)
+  let rebuild data_dir =
+    Market_data.Rebuild_norm.run ~normalizers ~data_dir ~out_dir date
+  in
+  match collector with
+  | None -> with_view ~data_dir ~skip rebuild
+  | Some collector -> with_collector_view ~data_dir ~collector ~skip date rebuild
 ;;
 
 let venue_arg =
@@ -133,9 +194,16 @@ let command =
          "-skip"
          (listed Skip.arg_type)
          ~doc:"VENUE:STREAM leave this raw stream out, e.g. binance:l2 (repeatable)"
+     and collector =
+       flag
+         "-collector"
+         (optional Raw_files.collector_arg)
+         ~doc:"ID read the raw files of this collector id (default: files without one)"
      in
      fun () ->
        let venues = if List.is_empty venues then None else Some venues in
-       let%map.Deferred.Or_error stats = run ?venues ~skip ~data_dir ~out_dir date in
+       let%map.Deferred.Or_error stats =
+         run ?venues ~skip ?collector ~data_dir ~out_dir date
+       in
        Core.print_s [%sexp (stats : Market_data.Rebuild_norm.Stats.t)])
 ;;

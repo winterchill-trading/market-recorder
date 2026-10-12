@@ -26,10 +26,15 @@ end
     rebuild runs over a temporary directory of symlinks to the other
     [raw/<venue>/<stream>] directories, removed afterwards. A normalizer that emits events
     of several streams from one raw stream (Hyperliquid [l2] gives [bbo] too) still writes
-    them; skip the raw stream that carries them. *)
+    them; skip the raw stream that carries them.
+
+    With [collector], only that collector's minute files ([<HH>-<MM>.<collector>.ndjson],
+    see {!Raw_files}) are read, through a temporary directory of per-file symlinks under
+    their plain names; without it, files carrying a collector id are not read. *)
 val run
   :  ?venues:Market_data.Venue.t list
   -> ?skip:Skip.t list
+  -> ?collector:string
   -> data_dir:string
   -> out_dir:string
   -> Date.t

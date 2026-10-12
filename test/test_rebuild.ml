@@ -115,3 +115,40 @@ let%expect_test "skip parsing" =
     |}];
   return ()
 ;;
+
+let%expect_test "-collector reads one collector's files" =
+  let dir = Helpers.temp_dir () in
+  let data_dir = dir ^/ "data" in
+  let%bind () = raw_day data_dir in
+  let day = "2026/10/12" in
+  let hl = data_dir ^/ "raw/hyperliquid/trades/BTC" ^/ day in
+  let%bind () =
+    Unix.rename ~src:(hl ^/ "13-35.ndjson") ~dst:(hl ^/ "13-35.east.ndjson")
+  in
+  let%bind before = Helpers.tree data_dir in
+  let run ?collector out =
+    let%bind stats = Rebuild.run ?collector ~data_dir ~out_dir:(dir ^/ out) date in
+    print_s [%sexp (stats : Md.Rebuild_norm.Stats.t Or_error.t)];
+    Helpers.print_tree (dir ^/ out)
+  in
+  let%bind () = run ~collector:"east" "east" in
+  [%expect
+    {|
+    (Ok
+     ((files 1) (frames 2) (disconnects 1) (events 2) (frame_errors 0)
+      (first_errors ()) (skipped_files 0) (skipped_venues ())))
+    hyperliquid/BTC/norm/trades/2026-10-12.bin
+    |}];
+  let%bind () = run "plain" in
+  [%expect
+    {|
+    (Ok
+     ((files 1) (frames 2) (disconnects 0) (events 1) (frame_errors 0)
+      (first_errors ()) (skipped_files 0) (skipped_venues ())))
+    binance/BTCUSDT/norm/trades/2026-10-12.bin
+    |}];
+  let%bind after = Helpers.tree data_dir in
+  print_s [%sexp ([%equal: string list] before after : bool)];
+  [%expect {| true |}];
+  return ()
+;;
