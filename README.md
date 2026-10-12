@@ -210,11 +210,28 @@ The status endpoint carries the same client counters under `clients`. Hyperliqui
 recorded; `bbo` then only has the event columns (`-` in `market-recorder status`) and is
 left out of the health rule.
 
-Hyperliquid, Binance and Bybit report every reconnect (and Bybit every book resync) as
-a `Market_data.Gap.t` on their `feed_with_gaps`; the recorder counts it per stream and
-writes a disconnect line into each affected stream's open raw minute file, so a mid-run
-reconnect shows in the raw files the way a shutdown does. OKX, Coinbase, Kraken, Deribit
-and Bitget report no gaps yet: their reconnects are counted in `reconnects_total` only.
+Every venue's client reports each reconnect and book resync as a `Market_data.Gap.t` on
+its `feed_with_gaps`; the recorder counts it per stream and writes a disconnect line into
+each affected stream's open raw minute file, so a mid-run reconnect shows in the raw files
+the way a shutdown does. A gap with an instrument (a book resync) only marks that symbol's
+files; a gap without one (a reconnect) marks every symbol of the connection. None of the
+venues replays missed messages, so the window between the drop and the resubscription
+(0.4 to 0.6 s of backoff on a first reconnect, plus the handshake) is lost:
+
+| Venue | Gaps reported | What a reconnect loses |
+| --- | --- | --- |
+| Hyperliquid | reconnects (no stream or instrument) | trades in the window; books and bbo recover from the fresh `l2Book` snapshot |
+| Binance | reconnects per stream, diff-depth sequence breaks per symbol | trades in the window; the book resyncs from a REST snapshot |
+| Bybit | reconnects per stream, book sequence breaks per symbol | trades in the window; the book restarts from the snapshot sent on subscribe |
+| OKX | reconnects per stream, L2 sequence breaks per symbol | trades for good (no history on subscribe); the book restarts from the `books` snapshot |
+| Coinbase | reconnects per stream, `level2` sequence breaks for every synced product | `level2` deltas and quotes in the window; trades only beyond the backlog resent on subscribe |
+| Kraken | reconnects per stream, book checksum mismatches per symbol | trades in the window (no backfill); the book restarts from a new snapshot |
+| Deribit | reconnects per stream, book `change_id` breaks per symbol | trades and quotes in the window; the book restarts from a full snapshot |
+| Bitget | reconnects per stream, `books` sequence or checksum breaks per symbol | trades beyond the last 50 resent on subscribe; the book restarts from the snapshot |
+
+`test/test_gaps.ml` drives `Recorder.record_gaps` with a stand-in gaps pipe: a
+reconnect marks every open file, and a per-instrument L2 gap marks only that symbol's
+L2 file.
 
 A stalled event log (a disk that stops taking writes) does not push back on the feeds:
 `Norm_writer` drains the feed pipes and the events wait in the writer's memory, so
