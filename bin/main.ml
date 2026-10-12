@@ -45,7 +45,7 @@ let check =
     (let%map_open.Command config =
        flag "-config" (required string) ~doc:"FILE recorder configuration (sexp)"
      in
-     fun () -> print_s [%sexp (load_config config : Config.t)])
+     fun () -> Core.print_s [%sexp (load_config config : Config.t)])
 ;;
 
 let () =
