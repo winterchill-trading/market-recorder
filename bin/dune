@@ -9,6 +9,11 @@
   uri
   cohttp
   cohttp-async
-  market-recorder)
+  market-recorder
+  (select
+   memtrace_start.ml
+   from
+   (memtrace -> memtrace_start.real.ml)
+   (-> memtrace_start.none.ml)))
  (preprocess
   (pps ppx_jane)))

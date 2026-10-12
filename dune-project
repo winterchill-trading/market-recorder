@@ -29,6 +29,7 @@
   zstd
   dune-build-info
   ppx_jane
+  memtrace
   (async_websocket :with-test)
   market-data
   hl-client

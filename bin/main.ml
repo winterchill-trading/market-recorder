@@ -107,6 +107,8 @@ let status =
 ;;
 
 let () =
+  (* before Async starts, so every allocation is sampled *)
+  Memtrace_start.start ();
   Command.group
     ~summary:"Raw-first market data recorder"
     [ "run", run
