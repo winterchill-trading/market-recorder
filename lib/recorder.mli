@@ -21,8 +21,17 @@ module Status : sig
     { open_minute_files : string list (** relative to [data_dir] *)
     ; pending_uploads : string list (** relative to [data_dir] *)
     ; streams : Metrics.Stream_status.t list
+    ; clients : (Market_data.Venue.t * Metrics.Feed_stats.t) list
+    (** each venue client's frames, parse errors and reconnects, summed over its feeds *)
     }
   [@@deriving sexp_of]
+
+  (** [streams] and [clients] read from the metrics. *)
+  val create
+    :  open_minute_files:string list
+    -> pending_uploads:string list
+    -> Metrics.t
+    -> t
 end
 
 val status : t -> Status.t

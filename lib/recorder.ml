@@ -6,8 +6,17 @@ module Status = struct
     { open_minute_files : string list
     ; pending_uploads : string list
     ; streams : Metrics.Stream_status.t list
+    ; clients : (Market_data.Venue.t * Metrics.Feed_stats.t) list
     }
   [@@deriving sexp_of]
+
+  let create ~open_minute_files ~pending_uploads metrics =
+    { open_minute_files
+    ; pending_uploads
+    ; streams = Metrics.streams metrics
+    ; clients = Metrics.feed_stats metrics
+    }
+  ;;
 end
 
 type t =
@@ -26,11 +35,11 @@ let metrics t = t.metrics
 
 let status t =
   let relative = List.map ~f:(Uploader.relative ~data_dir:t.data_dir) in
-  { Status.open_minute_files = relative (Raw_writer.open_files t.raw)
-  ; pending_uploads =
-      relative (Option.value_map t.uploader ~default:[] ~f:Uploader.pending)
-  ; streams = Metrics.streams t.metrics
-  }
+  Status.create
+    ~open_minute_files:(relative (Raw_writer.open_files t.raw))
+    ~pending_uploads:
+      (relative (Option.value_map t.uploader ~default:[] ~f:Uploader.pending))
+    t.metrics
 ;;
 
 let stats (frames, parse_errors, reconnects) =
