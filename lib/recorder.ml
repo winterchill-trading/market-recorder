@@ -46,9 +46,9 @@ let stats (frames, parse_errors, reconnects) =
   { Metrics.Feed_stats.frames; parse_errors; reconnects }
 ;;
 
-(* A feed with its gaps (none from the feeds that do not report them yet) and a reader of
-   its client's counters. Error frames the server sends count as parse errors, as they do
-   in the clients that do not count them apart. *)
+(* A feed with its gaps (every venue's client reports them) and a reader of its client's
+   counters. Error frames the server sends count as parse errors, as they do in the
+   clients that do not count them apart. *)
 let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
   let symbols = [ symbol ] in
   let streams = entry.streams in
