@@ -23,3 +23,6 @@ module Venue_seq = Venue_seq
 
 (** Exact gaps in a venue sequence. *)
 module Seq_gaps = Seq_gaps
+
+(** Suspected gaps from silence on a stream that normally ticks. *)
+module Silence = Silence
