@@ -96,6 +96,7 @@ let start (config : Config.t) =
         List.iter entry.streams ~f:(fun stream -> Metrics.register metrics (key stream));
         let on_raw ~stream ~recv_ts frame =
           let key = key stream in
+          let recv_ts = Metrics.clamp_recv_ts metrics key recv_ts in
           Hash_set.add seen key;
           Metrics.frame metrics key ~recv_ts ~bytes:(String.length frame);
           Raw_writer.write raw ~venue:entry.venue ~stream ~symbol ~recv_ts frame
