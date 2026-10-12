@@ -186,13 +186,19 @@ any) would have them replaced by spaces.
 `scripts/e2e-sims.sh [seconds]` builds and starts `hl-sim -port 3510`,
 `binance-sim -port 3520` and `bybit-sim -port 3530`, records them with
 [`examples/sims.sexp`](examples/sims.sexp) (two symbols per venue, upload command copying
-to `/tmp/market-recorder-sims/remote`), queries `/healthz` and `/metrics`, sends
-`SIGTERM`, lists the files and decompresses a few, then kills the simulators. Run it from
-this repo inside the multi-repo dune workspace:
+to `/tmp/market-recorder-sims/remote`), queries `/healthz`, `/status` and `/metrics`
+(through `market-recorder status`), sends `SIGTERM`, lists the files and decompresses a
+few, then kills the simulators. It exits 1, listing every `PROBLEM`, when `/healthz` is
+not 200 or reports a raw writer failure, a stream received no frame, an upload failed or
+is still pending, the recorder exits non-zero, or a stream lacks a compressed minute, its
+uploaded copy or its event log. Run it from this repo inside the multi-repo dune
+workspace, or point `WORKSPACE` at another workspace root holding the simulators:
 
 ```
 DUNE_BUILD_DIR=../_build-market-recorder scripts/e2e-sims.sh 75
 ```
+
+CI runs `shellcheck` on `scripts/*.sh`.
 
 The same by hand:
 
@@ -328,8 +334,8 @@ one minute at 10000 frames/s: 600000 frames, 104.2 MB raw, 600000 events, 4.0 MB
   all three          249757 frames/s     43.4 MB/s  (2.4s)
 ```
 
-So one core handles about 250k frames/s (45 MB/s) end to end, 125 times the busiest
-simulated minute; JSON decoding in the normalizer is half of the cost. The busiest
+So one core handles about 250k frames/s (45 MB/s) end to end; JSON decoding in the
+normalizer is about 60% of the cost. The busiest
 mainnet stream in the 90s run above (Binance `BTCUSDT` bbo, about 1000 frames/s) uses
 under 0.5% of that.
 
