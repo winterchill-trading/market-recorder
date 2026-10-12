@@ -13,6 +13,7 @@ daily `Market_data.Event_log` files that the `market-data` tools read.
 market-recorder run -config recorder.sexp
 market-recorder check-config -config recorder.sexp
 market-recorder status -url http://localhost:9100     # /metrics of a running recorder as tables
+market-recorder rebuild-norm -data-dir DIR -out DIR -date YYYY-MM-DD   # norm/ from raw/
 ```
 
 `SIGTERM` or `SIGINT` flushes everything, closes the feeds, writes a disconnect line to
@@ -195,6 +196,41 @@ only shutdown does.
 5 minutes (usually a venue changed its message format), `MarketRecorderReconnecting` on
 more than 3 reconnects in 15 minutes. CI checks it with `promtool check rules` and runs
 the unit test in `deploy/prometheus/alerts_test.yml` (`promtool test rules`).
+
+## Rebuilding norm from raw
+
+The raw minute files are the system of record; the event logs can be rebuilt from them
+at any time, for example after a normalizer fix:
+
+```
+market-recorder rebuild-norm -data-dir DIR -out NEW_DIR -date 2026-10-12 \
+  [-venue binance ...] [-skip venue:stream ...]
+scripts/rebuild-day.sh DIR [2026-10-12] [flags...]   # default: yesterday, into DIR/rebuilt/DATE
+```
+
+It runs `Market_data.Rebuild_norm` with the `Market_data.Normalizer.S` adapter of every
+venue the recorder records (`Rebuild.normalizers`: Hyperliquid, Binance, Bybit, OKX,
+Coinbase, Kraken, Deribit, Bitget). Each raw venue/stream/symbol series gets a fresh
+normalizer, fed its minute files in order; a disconnect line resets it as a reconnect
+does. The output has the recorder's `norm/` layout, so a rebuilt directory can replace or
+be diffed against the live one. The output directory must be new or empty (event logs are
+appended to).
+
+- `-venue V` (repeatable) rebuilds only those venues; the others count as skipped.
+- `-skip venue:stream` (repeatable) leaves a raw stream out entirely, for streams with
+  data known not to rebuild. The rebuild then reads a temporary directory of symlinks to
+  the other `raw/<venue>/<stream>` directories, removed afterwards. Hyperliquid's `bbo`
+  events come from the `l2` frames, so `-skip hyperliquid:l2` drops both.
+- The L2 snapshot index (`norm/l2/_snapshots/`) is not written: `Rebuild_norm` takes no
+  snapshot interval.
+
+`scripts/e2e-rebuild.sh [seconds] [-skip venue:stream ...]` records the three simulators
+with `e2e-sims.sh`, rebuilds the day into `/tmp/market-recorder-sims/rebuilt/<date>` and
+compares every recorded event log with its rebuilt copy (event count via
+`market-data dump`, then `cmp`). A 20 s run (two symbols on each of Hyperliquid, Binance
+and Bybit, 40 minute files, 2236 frames, 2545 events) rebuilt all 22 event logs byte for
+byte identical, with no rejected frames; the only files not reproduced are the 6 L2
+snapshot index files.
 
 ## Tardis compatibility
 
@@ -379,3 +415,4 @@ under 0.5% of that.
 | `Warnings` | per-stream warnings, at most one line a minute with a suppressed count |
 | `Process_metrics` | build info, open descriptors, RSS and GC gauges |
 | `Status_table` | Prometheus text parser and the tables of `status` |
+| `Rebuild` | `rebuild-norm` over every venue's normalizer, venue filter and skip list |
