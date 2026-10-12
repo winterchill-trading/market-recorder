@@ -6,6 +6,8 @@
   core_unix
   async
   uri
+  cohttp
+  cohttp-async
   zstd
   market-data
   hl-client
