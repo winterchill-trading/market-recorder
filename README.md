@@ -266,6 +266,29 @@ the venue sends: Kraken's spot streams for `PF_XBTUSD` come from `BTC/USD`, whic
 event log stores under `kraken/BTC/USD/` (one directory level per `/`), while its funding
 stays under `kraken/PF_XBTUSD/`.
 
+## Throughput
+
+`bench/bench.exe [-per-second N]` builds one synthetic minute of Binance `BTCUSDT`
+frames (30% `aggTrade`, the rest `bookTicker`, a `markPrice` every 1000 frames, about
+170 bytes each), runs it through the Binance feed normalizer, the raw minute writer
+(including the zstd roll on close) and the event log writer, and prints each stage's
+rate. On an M-series Mac, dev profile, single core:
+
+```
+one minute at 2000 frames/s: 120000 frames, 20.7 MB raw, 120000 events, 0.9 MB compressed
+  normalize          427536 frames/s     73.8 MB/s  (280.7ms)
+  raw write + zstd   777333 frames/s    134.2 MB/s  (154.4ms)
+  event log write   6276479 frames/s   1083.3 MB/s  (19.1ms)
+  all three          264218 frames/s     45.6 MB/s  (454.2ms)
+one minute at 10000 frames/s: 600000 frames, 104.2 MB raw, 600000 events, 4.0 MB compressed
+  all three          249757 frames/s     43.4 MB/s  (2.4s)
+```
+
+So one core handles about 250k frames/s (45 MB/s) end to end, 125 times the busiest
+simulated minute; JSON decoding in the normalizer is half of the cost. The busiest
+mainnet stream in the 90s run above (Binance `BTCUSDT` bbo, about 1000 frames/s) uses
+under 0.5% of that.
+
 ## Modules
 
 | Module | |
