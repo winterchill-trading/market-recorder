@@ -5,7 +5,10 @@ open Market_recorder
 let load_config path =
   match Config.load path with
   | Ok config -> config
-  | Error e -> Error.raise e
+  | Error e ->
+    (* a readable message, not an uncaught exception with a backtrace *)
+    Core.eprint_s [%sexp (e : Error.t)];
+    Stdlib.exit 1
 ;;
 
 let run =
