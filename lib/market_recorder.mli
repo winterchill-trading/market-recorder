@@ -17,3 +17,6 @@ module Rebuild = Rebuild
 
 (** [merge]: two collectors' raw minute files into one canonical copy. *)
 module Raw_merge = Raw_merge
+
+(** Venue sequence numbers in raw frames, for the merge. *)
+module Venue_seq = Venue_seq
