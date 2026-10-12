@@ -9,6 +9,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: shellcheck scripts/*.sh
+      # hl-client links libsecp256k1; ox-setup installs depexts only on an exact cache
+      # hit, so a partial hit that rebuilds a moved hl-client pin needs it up front.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsecp256k1-dev
       - uses: winterchill-trading/infra/.github/actions/ox-setup@main
         with:
           pins: |
