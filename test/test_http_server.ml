@@ -117,12 +117,15 @@ let%expect_test "status sexp" =
   Metrics.register metrics key;
   Metrics.frame metrics key ~recv_ts:!now ~bytes:42;
   now := time "2026-10-12T09:00:02Z";
+  (* a fake feed's client counters *)
+  Metrics.add_feed_stats_source metrics ~venue:Bitget (fun () ->
+    { frames = 3; parse_errors = 1; reconnects = 2 });
   let status () =
     [%sexp
-      ({ open_minute_files = [ "raw/bitget/bbo/BTCUSDT/2026/10/12/09-00.ndjson" ]
-       ; pending_uploads = [ "raw/bitget/bbo/BTCUSDT/2026/10/12/08-59.ndjson.zst" ]
-       ; streams = Metrics.streams metrics
-       }
+      (Recorder.Status.create
+         ~open_minute_files:[ "raw/bitget/bbo/BTCUSDT/2026/10/12/09-00.ndjson" ]
+         ~pending_uploads:[ "raw/bitget/bbo/BTCUSDT/2026/10/12/08-59.ndjson.zst" ]
+         metrics
        : Recorder.Status.t)]
   in
   let show path =
@@ -139,7 +142,8 @@ let%expect_test "status sexp" =
      (pending_uploads (raw/bitget/bbo/BTCUSDT/2026/10/12/08-59.ndjson.zst))
      (streams
       (((key ((venue Bitget) (stream Bbo) (symbol BTCUSDT))) (frames 1)
-        (bytes 42) (events 0) (clamped 0) (flaps 0) (last_frame_age 2s)))))
+        (bytes 42) (events 0) (clamped 0) (flaps 0) (last_frame_age 2s))))
+     (clients ((Bitget ((frames 3) (parse_errors 1) (reconnects 2))))))
     |}];
   let { Http_server.Response.status; _ } = Http_server.respond metrics ~path:"/status" in
   print_s [%sexp (Cohttp.Code.code_of_status status : int)];
