@@ -22,6 +22,14 @@ market-recorder merge -a DIR_A -b DIR_B -out DIR -date YYYY-MM-DD      # two col
 object; `merge -collector-a/-collector-b` and `rebuild-norm -collector` read such files.
 At startup the recorder logs its `RLIMIT_NOFILE` (soft and hard).
 
+`MEMTRACE=FILE.ctf` starts [memtrace](https://github.com/janestreet/memtrace) before
+anything else runs (`Memtrace.trace_if_requested`), sampling at `MEMTRACE_RATE`
+(default 1e-6); an empty or unset `MEMTRACE` does nothing. The infra compose stack and
+Helm chart pass both variables through. A build without the `memtrace` library (it is a
+declared dependency; dune falls back only when it is missing from the switch) prints a
+warning and ignores `MEMTRACE`. CI checks that `MEMTRACE=/tmp/x.ctf market-recorder
+-help` writes the trace.
+
 `SIGTERM` or `SIGINT` flushes everything, closes the feeds, writes a disconnect line to
 every stream that received data, compresses the open minutes, gives pending uploads up to
 10s and exits 0.
