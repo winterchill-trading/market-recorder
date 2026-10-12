@@ -85,6 +85,7 @@ let start (config : Config.t) =
   let raw = Raw_writer.create ~data_dir ~on_closed () in
   let norm = Norm_writer.create ~data_dir () in
   let metrics = Metrics.create () in
+  Metrics.set_flush_error_source metrics (fun () -> Raw_writer.last_error raw);
   Option.iter uploader ~f:(fun u ->
     Metrics.set_upload_source metrics (fun () ->
       Uploader.uploaded u, Uploader.failures u, List.length (Uploader.pending u)));
