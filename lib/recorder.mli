@@ -39,6 +39,20 @@ end
 
 val status : t -> Status.t
 
+(** Reads a feed's gaps until the pipe closes. A gap of [symbol] (or of every instrument)
+    is counted for each of [streams] it covers ({!Metrics.gap}), and writes a disconnect
+    line (an empty line) into that stream's raw minute file when [is_open] says the stream
+    has a file, so a reconnect shows in the raw files the way a shutdown does. *)
+val record_gaps
+  :  raw:Raw_writer.t
+  -> metrics:Metrics.t
+  -> is_open:(Metrics.Key.t -> bool)
+  -> venue:Market_data.Venue.t
+  -> symbol:string
+  -> streams:Market_data.Stream.t list
+  -> Market_data.Gap.t Pipe.Reader.t
+  -> unit Deferred.t
+
 (** Closes the feeds, writes a disconnect line to every stream that received data,
     compresses the open minutes, closes the event logs, gives pending uploads up to 10s
     and saves the rest of the upload queue. Idempotent. *)

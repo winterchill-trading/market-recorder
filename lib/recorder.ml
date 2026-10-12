@@ -46,24 +46,25 @@ let stats (frames, parse_errors, reconnects) =
   { Metrics.Feed_stats.frames; parse_errors; reconnects }
 ;;
 
-(* A feed and a reader of its client's counters. Error frames the server sends count as
-   parse errors, as they do in the clients that do not count them apart. *)
+(* A feed with its gaps (none from the feeds that do not report them yet) and a reader of
+   its client's counters. Error frames the server sends count as parse errors, as they do
+   in the clients that do not count them apart. *)
 let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
   let symbols = [ symbol ] in
   let streams = entry.streams in
   match entry.venue with
   | Hyperliquid ->
-    let%map feed, read =
-      Hl_client.Live_feed.create_with_stats
+    let%map t =
+      Hl_client.Live_feed.start
         ~on_raw
         (Config.Endpoint.hyperliquid entry.config)
         ~symbols
         ~streams
     in
-    ( feed
+    ( Hl_client.Live_feed.feed_with_gaps t
     , fun () ->
         let { Hl_client.Live_feed.Stats.frames; parse_errors; error_frames; reconnects } =
-          read ()
+          Hl_client.Live_feed.stats t
         in
         stats (frames, parse_errors + error_frames, reconnects) )
   | Binance ->
@@ -74,7 +75,7 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
         ~symbols
         ~streams
     in
-    ( Binance_client.Live_feed.feed t
+    ( Binance_client.Live_feed.feed_with_gaps t
     , fun () ->
         let { Binance_client.Live_feed.Stats.frames; parse_errors; reconnects } =
           Binance_client.Live_feed.stats t
@@ -88,7 +89,7 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
         ~symbols
         ~streams
     in
-    ( Bybit_client.Live_feed.feed t
+    ( Bybit_client.Live_feed.feed_with_gaps t
     , fun () ->
         List.fold
           (Bybit_client.Live_feed.stats t)
@@ -103,7 +104,7 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
         ~symbols
         ~streams
     in
-    ( Okx_feed.Live_feed.feed t
+    ( Market_data.Feed.With_gaps.of_feed (Okx_feed.Live_feed.feed t)
     , fun () ->
         let { Okx_feed.Live_feed.Stats.frames; parse_errors; reconnects } =
           Okx_feed.Live_feed.stats t
@@ -117,7 +118,7 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
         ~symbols
         ~streams
     in
-    ( Coinbase_feed.Live_feed.feed t
+    ( Market_data.Feed.With_gaps.of_feed (Coinbase_feed.Live_feed.feed t)
     , fun () ->
         let { Coinbase_feed.Live_feed.Stats.frames; parse_errors; reconnects } =
           Coinbase_feed.Live_feed.stats t
@@ -131,7 +132,7 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
         ~symbols
         ~streams
     in
-    ( Kraken_feed.Live_feed.feed t
+    ( Market_data.Feed.With_gaps.of_feed (Kraken_feed.Live_feed.feed t)
     , fun () ->
         let { Kraken_feed.Live_feed.Stats.frames; parse_errors; reconnects } =
           Kraken_feed.Live_feed.stats t
@@ -145,7 +146,7 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
         ~symbols
         ~streams
     in
-    ( Deribit_feed.Live_feed.feed t
+    ( Market_data.Feed.With_gaps.of_feed (Deribit_feed.Live_feed.feed t)
     , fun () ->
         let { Deribit_feed.Live_feed.Stats.frames; parse_errors; reconnects } =
           Deribit_feed.Live_feed.stats t
@@ -159,7 +160,7 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
         ~symbols
         ~streams
     in
-    ( feed
+    ( Market_data.Feed.With_gaps.of_feed feed
     , fun () ->
         let { Bitget_feed.Live_feed.Stats.frames; parse_errors; error_events; reconnects }
           =
@@ -169,6 +170,25 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
   | (Nyse | Cboe | Cme) as venue ->
     (* rejected by [Config.of_sexp] *)
     raise_s [%message "no live feed" (venue : Market_data.Venue.t)]
+;;
+
+let record_gaps ~raw ~metrics ~is_open ~venue ~symbol ~streams gaps =
+  Pipe.iter_without_pushback gaps ~f:(fun (gap : Market_data.Gap.t) ->
+    let affected =
+      match gap.instrument with
+      | Some i ->
+        Market_data.Instrument.equal i (Market_data.Instrument.create venue symbol)
+      | None -> true
+    in
+    if affected
+    then
+      List.iter streams ~f:(fun stream ->
+        if Option.for_all gap.stream ~f:(Market_data.Stream.equal stream)
+        then (
+          let key = { Metrics.Key.venue; stream; symbol } in
+          Metrics.gap metrics key;
+          if is_open key
+          then Raw_writer.disconnect raw ~venue ~stream ~symbol ~recv_ts:gap.recv_ts)))
 ;;
 
 (* Hyperliquid's [l2Book] frames feed both [L2] and [Bbo]; the client passes each one to
@@ -237,8 +257,19 @@ let start ?collector (config : Config.t) =
           Metrics.frame metrics key ~recv_ts ~bytes:(String.length frame);
           Raw_writer.write raw ~venue:entry.venue ~stream ~symbol ~recv_ts frame
         in
-        let%map feed, read_stats = open_feed entry ~symbol ~on_raw in
+        let%map with_gaps, read_stats = open_feed entry ~symbol ~on_raw in
         Metrics.add_feed_stats_source metrics ~venue:entry.venue read_stats;
+        let (module G : Market_data.Feed.With_gaps.S) = with_gaps in
+        don't_wait_for
+          (record_gaps
+             ~raw
+             ~metrics
+             ~is_open:(Hash_set.mem seen)
+             ~venue:entry.venue
+             ~symbol
+             ~streams:(List.filter entry.streams ~f:(has_raw_frames entry))
+             G.gaps);
+        let feed = Market_data.Feed.With_gaps.to_feed with_gaps in
         let (module F : Market_data.Feed.S) = feed in
         List.iter entry.streams ~f:(fun stream ->
           let length : Market_data.Stream.t -> unit -> int = function
