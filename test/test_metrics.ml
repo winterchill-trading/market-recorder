@@ -205,3 +205,46 @@ let%expect_test "client counters are summed per venue" =
     |}];
   return ()
 ;;
+
+let%expect_test "a stream recorded under another one only counts events" =
+  let now = ref (time "2026-10-12T09:00:00Z") in
+  let t = Metrics.create ~now:(fun () -> !now) () in
+  let l2 : Metrics.Key.t = { venue = Hyperliquid; stream = L2; symbol = "BTC" } in
+  let bbo : Metrics.Key.t = { l2 with stream = Bbo } in
+  Metrics.register t l2;
+  Metrics.register ~raw:false t bbo;
+  now := time "2026-10-12T09:00:40Z";
+  Metrics.frame t l2 ~recv_ts:!now ~bytes:100;
+  Metrics.event t l2;
+  Metrics.event t bbo;
+  print_s [%sexp (Metrics.health t : Metrics.Health.t)];
+  [%expect {| Healthy |}];
+  print_string (Metrics.render t);
+  [%expect
+    {|
+    # HELP market_recorder_frames_total Raw frames received.
+    # TYPE market_recorder_frames_total counter
+    market_recorder_frames_total{venue="hyperliquid",stream="l2",symbol="BTC"} 1
+    # HELP market_recorder_bytes_total Bytes of raw frames received.
+    # TYPE market_recorder_bytes_total counter
+    market_recorder_bytes_total{venue="hyperliquid",stream="l2",symbol="BTC"} 100
+    # HELP market_recorder_events_total Normalized events written.
+    # TYPE market_recorder_events_total counter
+    market_recorder_events_total{venue="hyperliquid",stream="bbo",symbol="BTC"} 1
+    market_recorder_events_total{venue="hyperliquid",stream="l2",symbol="BTC"} 1
+    # HELP market_recorder_clamped_frames_total Raw frames whose recv_ts went backwards and was raised to the previous one.
+    # TYPE market_recorder_clamped_frames_total counter
+    market_recorder_clamped_frames_total{venue="hyperliquid",stream="l2",symbol="BTC"} 0
+    # HELP market_recorder_norm_pipe_length Normalized events waiting in the pipe to the event log writer.
+    # TYPE market_recorder_norm_pipe_length gauge
+    market_recorder_norm_pipe_length{venue="hyperliquid",stream="bbo",symbol="BTC"} 0
+    market_recorder_norm_pipe_length{venue="hyperliquid",stream="l2",symbol="BTC"} 0
+    # HELP market_recorder_healthz_flaps_total Times the stream went stale (no frame for 30s) after being fresh.
+    # TYPE market_recorder_healthz_flaps_total counter
+    market_recorder_healthz_flaps_total{venue="hyperliquid",stream="l2",symbol="BTC"} 0
+    # HELP market_recorder_last_frame_age_seconds Seconds since the last raw frame (since start if none yet).
+    # TYPE market_recorder_last_frame_age_seconds gauge
+    market_recorder_last_frame_age_seconds{venue="hyperliquid",stream="l2",symbol="BTC"} 0.000
+    |}];
+  return ()
+;;
