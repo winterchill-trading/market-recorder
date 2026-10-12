@@ -63,3 +63,43 @@ let%expect_test "healthz and metrics over http" =
     |}];
   Http_server.close server
 ;;
+
+let%expect_test "healthz reports the last raw writer failure and its age" =
+  let now = ref (time "2026-10-12T09:00:00Z") in
+  let metrics = Metrics.create ~now:(fun () -> !now) () in
+  let key : Metrics.Key.t = { venue = Okx; stream = Trades; symbol = "BTC-USDT" } in
+  Metrics.register metrics key;
+  Metrics.frame metrics key ~recv_ts:!now ~bytes:1;
+  let failure = ref None in
+  Metrics.set_flush_error_source metrics (fun () -> !failure);
+  let show () =
+    let { Http_server.Response.status; body; _ } =
+      Http_server.respond metrics ~path:"/healthz"
+    in
+    printf "%d\n%s" (Cohttp.Code.code_of_status status) body
+  in
+  show ();
+  [%expect {|
+    200
+    ok
+    |}];
+  failure := Some (Error.of_string "No space left on device", !now);
+  now := time "2026-10-12T09:00:05Z";
+  Metrics.frame metrics key ~recv_ts:!now ~bytes:1;
+  show ();
+  [%expect
+    {|
+    503
+    (last_flush_error ((error "No space left on device") (age 5s)))
+    |}];
+  now := time "2026-10-12T09:00:40Z";
+  Metrics.frame metrics key ~recv_ts:!now ~bytes:1;
+  show ();
+  [%expect
+    {|
+    200
+    ok
+    (last_flush_error ((error "No space left on device") (age 40s)))
+    |}];
+  return ()
+;;
