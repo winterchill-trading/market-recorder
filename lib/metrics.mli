@@ -68,7 +68,8 @@ module Health : sig
 end
 
 (** [Stale] lists every registered stream without a frame in the last [max_age] (default
-    30s). *)
+    30s). Each call also counts streams that turned stale since the previous call
+    ([healthz_flaps_total]); {!render} calls it with the default [max_age]. *)
 val default_max_age : Time_ns.Span.t
 
 val health : ?max_age:Time_ns.Span.t -> t -> Health.t

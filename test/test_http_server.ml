@@ -55,6 +55,9 @@ let%expect_test "healthz and metrics over http" =
     # HELP market_recorder_norm_pipe_length Normalized events waiting in the pipe to the event log writer.
     # TYPE market_recorder_norm_pipe_length gauge
     market_recorder_norm_pipe_length{venue="bybit",stream="bbo",symbol="BTCUSDT"} 0
+    # HELP market_recorder_healthz_flaps_total Times the stream went stale (no frame for 30s) after being fresh.
+    # TYPE market_recorder_healthz_flaps_total counter
+    market_recorder_healthz_flaps_total{venue="bybit",stream="bbo",symbol="BTCUSDT"} 1
     # HELP market_recorder_last_frame_age_seconds Seconds since the last raw frame (since start if none yet).
     # TYPE market_recorder_last_frame_age_seconds gauge
     market_recorder_last_frame_age_seconds{venue="bybit",stream="bbo",symbol="BTCUSDT"} 60.000

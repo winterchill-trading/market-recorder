@@ -17,6 +17,8 @@ module Counters = struct
     ; mutable events : int
     ; mutable clamped : int
     ; mutable pipe_length : unit -> int
+    ; mutable stale : bool
+    ; mutable flaps : int
     ; mutable last_frame : Time_ns.t option
     }
 end
@@ -44,6 +46,8 @@ let get t key =
     ; events = 0
     ; clamped = 0
     ; pipe_length = (fun () -> 0)
+    ; stale = false
+    ; flaps = 0
     ; last_frame = None
     })
 ;;
@@ -112,13 +116,16 @@ let sorted t =
 
 let default_max_age = Time_ns.Span.of_sec 30.
 
+(* Every evaluation (a /healthz or /metrics request) also counts the streams that went
+   from fresh to stale since the previous one. *)
 let health ?(max_age = default_max_age) t =
   let stale =
     List.filter_map (sorted t) ~f:(fun (key, c) ->
       let last_frame_age = age t c in
-      if Time_ns.Span.( > ) last_frame_age max_age
-      then Some { Health.key; last_frame_age; frames = c.frames }
-      else None)
+      let stale = Time_ns.Span.( > ) last_frame_age max_age in
+      if stale && not c.stale then c.flaps <- c.flaps + 1;
+      c.stale <- stale;
+      if stale then Some { Health.key; last_frame_age; frames = c.frames } else None)
   in
   if List.is_empty stale then Health.Healthy else Stale stale
 ;;
@@ -140,6 +147,7 @@ let labels (k : Key.t) =
 ;;
 
 let render t =
+  ignore (health t : Health.t);
   let buf = Buffer.create 1024 in
   let rows = sorted t in
   let family name ~type_ ~help value =
@@ -172,6 +180,11 @@ let render t =
     ~type_:"gauge"
     ~help:"Normalized events waiting in the pipe to the event log writer."
     (fun c -> Int.to_string (c.pipe_length ()));
+  family
+    "market_recorder_healthz_flaps_total"
+    ~type_:"counter"
+    ~help:"Times the stream went stale (no frame for 30s) after being fresh."
+    (fun c -> Int.to_string c.flaps);
   family
     "market_recorder_last_frame_age_seconds"
     ~type_:"gauge"
