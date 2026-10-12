@@ -93,6 +93,7 @@ let () =
     ; "check-config", check
     ; "status", status
     ; "rebuild-norm", Rebuild.command
+    ; "merge", Raw_merge.command
     ]
   |> Command_unix.run
 ;;
