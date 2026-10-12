@@ -416,6 +416,8 @@ let run
   ?(window = default_window)
   ?(silence = default_silence)
   ?(clock_error = Time_ns.Span.zero)
+  ?a_collector
+  ?b_collector
   ~a_dir
   ~b_dir
   ~out_dir
@@ -434,10 +436,13 @@ let run
           (out_dir : string)
           ~first:(List.hd_exn existing).path]
   else (
-    let%bind a_files = Raw_minute.files ~data_dir:a_dir date
-    and b_files = Raw_minute.files ~data_dir:b_dir date
-    and a_before = Raw_minute.files ~data_dir:a_dir (Date.add_days date (-1))
-    and b_before = Raw_minute.files ~data_dir:b_dir (Date.add_days date (-1)) in
+    let a_files = Raw_files.files ?collector:a_collector ~data_dir:a_dir
+    and b_files = Raw_files.files ?collector:b_collector ~data_dir:b_dir in
+    let yesterday = Date.add_days date (-1) in
+    let%bind a_before = a_files yesterday
+    and b_before = b_files yesterday
+    and a_files = a_files date
+    and b_files = b_files date in
     let key (_, (f : Raw_minute.File.t)) = Series.of_file f, f.minute in
     (* the previous day's last minute, to match frames stamped across midnight *)
     let last_minute = Time_ns.sub day_start Time_ns.Span.minute in
@@ -646,10 +651,30 @@ let command =
          ~doc:
            "SPAN the two collectors' summed clock error bound: widens -window, and \
             copies closer than it keep collector A's stamp (default 0s)"
+     and a_collector =
+       flag
+         "-collector-a"
+         (optional Raw_files.collector_arg)
+         ~doc:
+           "ID read only copy A's files of this collector id (default: files without one)"
+     and b_collector =
+       flag
+         "-collector-b"
+         (optional Raw_files.collector_arg)
+         ~doc:"ID read only copy B's files of this collector id"
      in
      fun () ->
        let%map.Deferred.Or_error report =
-         run ~window ~silence ~clock_error ~a_dir ~b_dir ~out_dir date
+         run
+           ~window
+           ~silence
+           ~clock_error
+           ?a_collector
+           ?b_collector
+           ~a_dir
+           ~b_dir
+           ~out_dir
+           date
        in
        Core.print_s [%sexp (report.total : Counts.t)])
 ;;

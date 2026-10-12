@@ -117,6 +117,10 @@ val run
   :  ?window:Time_ns.Span.t
   -> ?silence:Time_ns.Span.t
   -> ?clock_error:Time_ns.Span.t
+  -> ?a_collector:string
+       (** read copy A's files of this collector id ({!Raw_files}); by default the files
+           without an id. [a_dir] and [b_dir] may be one tree holding both collectors. *)
+  -> ?b_collector:string
   -> a_dir:string
   -> b_dir:string
   -> out_dir:string

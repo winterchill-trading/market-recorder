@@ -513,3 +513,53 @@ let%expect_test "frames stamped across midnight are matched with the previous da
     |}];
   return ()
 ;;
+
+let%expect_test "two collectors' files in one tree, told apart by collector id" =
+  let dir = Helpers.temp_dir () in
+  let data_dir = dir ^/ "both" in
+  let write collector lines =
+    let t = Raw_writer.create ~collector ~data_dir ~on_closed:ignore () in
+    List.iter lines ~f:(fun (ts, frame) ->
+      Raw_writer.write
+        t
+        ~venue:Bybit
+        ~stream:Trades
+        ~symbol:"BTCUSDT"
+        ~recv_ts:(Helpers.time ts)
+        frame);
+    Raw_writer.close t
+  in
+  let%bind () =
+    write "tokyo" [ "2026-10-12T13:35:01Z", "t1"; "2026-10-12T13:35:03Z", "t3" ]
+  in
+  let%bind () =
+    write "singapore" [ "2026-10-12T13:35:01.002Z", "t1"; "2026-10-12T13:35:02Z", "t2" ]
+  in
+  let out_dir = dir ^/ "out" in
+  let%bind report =
+    Raw_merge.run
+      ~a_collector:"tokyo"
+      ~b_collector:"singapore"
+      ~a_dir:data_dir
+      ~b_dir:data_dir
+      ~out_dir
+      (Date.of_string "2026-10-12")
+  in
+  print_s [%sexp ((Or_error.ok_exn report).total : Raw_merge.Counts.t)];
+  let%bind () = Helpers.print_tree out_dir in
+  let%bind merged =
+    Helpers.unzstd (out_dir ^/ "raw/bybit/trades/BTCUSDT/2026/10/12/13-35.ndjson.zst")
+  in
+  print_string merged;
+  [%expect
+    {|
+    ((minutes 1) (only_a 1) (only_b 1) (both 1) (gaps_closed 0) (gaps_kept 0)
+     (text_differs 0) (previous_day 0))
+    _merge/2026-10-12.json
+    raw/bybit/trades/BTCUSDT/2026/10/12/13-35.ndjson.zst
+    2026-10-12T13:35:01.000000Z t1
+    2026-10-12T13:35:02.000000Z t2
+    2026-10-12T13:35:03.000000Z t3
+    |}];
+  return ()
+;;
