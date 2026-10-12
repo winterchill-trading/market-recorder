@@ -28,6 +28,7 @@ let%expect_test "process gauges" =
     {|
     (market_recorder_build_info (version ocaml))
     (market_recorder_open_fds ())
+    (market_recorder_max_fds ())
     (market_recorder_gc_minor_collections_total ())
     (market_recorder_gc_major_collections_total ())
     (market_recorder_gc_compactions_total ())
@@ -42,6 +43,15 @@ let%expect_test "process gauges" =
        |> Bool.equal
             (String.equal (Core_unix.Utsname.sysname (Core_unix.uname ())) "Linux")
        : bool)];
+  [%expect {| true |}];
+  return ()
+;;
+
+let%expect_test "the descriptor limit is known and at least the open count" =
+  let soft, _ = Option.value_exn (Process_metrics.fd_limits ()) in
+  let open_fds = Option.value_exn (Process_metrics.open_fds ()) in
+  print_s
+    [%sexp (Option.for_all soft ~f:(fun soft -> Int64.(soft >= of_int open_fds)) : bool)];
   [%expect {| true |}];
   return ()
 ;;

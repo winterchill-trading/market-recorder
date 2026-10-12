@@ -27,6 +27,13 @@ let run =
      fun () ->
        Log.Global.set_output [ Log.Output.stderr () ];
        let config = load_config config in
+       (match Process_metrics.fd_limits () with
+        | None -> Log.Global.info "RLIMIT_NOFILE unknown"
+        | Some (soft, hard) ->
+          let show = Option.value_map ~default:"unlimited" ~f:Int64.to_string in
+          Log.Global.info_s
+            [%message
+              "RLIMIT_NOFILE" ~soft:(show soft : string) ~hard:(show hard : string)]);
        let%bind recorder = Recorder.start ?collector config in
        let clock_error = Clock_error.start () in
        Clock_error.register clock_error (Recorder.metrics recorder);

@@ -37,6 +37,17 @@ let gauge buf name ~help ?(labels = "") value =
   bprintf buf "# HELP %s %s\n# TYPE %s gauge\n%s%s %s\n" name help name name labels value
 ;;
 
+let limit_to_int64 : Core_unix.RLimit.limit -> int64 option = function
+  | Limit n -> Some n
+  | Infinity -> None
+;;
+
+let fd_limits () =
+  match Core_unix.RLimit.get Core_unix.RLimit.num_file_descriptors with
+  | { cur; max } -> Some (limit_to_int64 cur, limit_to_int64 max)
+  | exception _ -> None
+;;
+
 let render () =
   let buf = Buffer.create 512 in
   gauge
@@ -47,6 +58,13 @@ let render () =
     "1";
   Option.iter (open_fds ()) ~f:(fun n ->
     gauge buf "market_recorder_open_fds" ~help:"Open file descriptors." (Int.to_string n));
+  Option.iter (fd_limits ()) ~f:(fun (soft, _) ->
+    Option.iter soft ~f:(fun n ->
+      gauge
+        buf
+        "market_recorder_max_fds"
+        ~help:"Soft RLIMIT_NOFILE: the most file descriptors the process may open."
+        (Int64.to_string n)));
   Option.iter (rss_bytes ()) ~f:(fun n ->
     gauge
       buf
