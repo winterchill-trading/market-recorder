@@ -26,6 +26,7 @@ every stream that received data, compresses the open minutes, gives pending uplo
   raw/<venue>/<stream>/<symbol>/<YYYY>/<MM>/<DD>/<HH>-<MM>.ndjson      the open minute
   raw/<venue>/<stream>/<symbol>/<YYYY>/<MM>/<DD>/<HH>-<MM>.ndjson.zst  closed minutes
   <venue>/<symbol>/norm/<stream>/<YYYY-MM-DD>.bin                      normalized events
+  <venue>/<symbol>/norm/l2/_snapshots/<YYYY-MM-DD>.bin                 full L2 book each minute
   upload-pending.sexp                                                  files not yet uploaded
 ```
 
@@ -97,6 +98,7 @@ notional, the others in base currency.
    ((venue Hyperliquid) (symbols (BTC ETH)) (streams (Trades L2 Funding)) (config Testnet))
    ((venue Bybit) (symbols (BTCUSDT)) (streams (Trades L2))
     (config (Custom (base_url https://api.bybit.com) (ws_url wss://stream.bybit.com/v5/public/linear))))))
+ (snapshot_interval 1m)                            ; default 1m, 0s turns it off
  (upload                                           ; optional
   ((command (rclone copyto {file} remote:bucket/{rel}))
    (delete_after_upload true))))                   ; default false
@@ -108,6 +110,7 @@ notional, the others in base currency.
 | `http_port` | port of `/healthz` and `/metrics` |
 | `venues[].config` | `Mainnet`, `Testnet`, `(Local)` / `(Local (port N))` for a simulator on localhost (default ports 3000, 3300, 3400), or `(Custom (base_url URL) [(ws_url URL)] [(futures_ws_url URL)])`; the websocket-only feeds (OKX, Coinbase, Kraken, Deribit, Bitget) connect to `ws_url`, else `base_url`; `futures_ws_url` is Kraken's funding socket |
 | `venues[].streams` | any of `Trades Bbo L2 Funding`; `Private` is rejected |
+| `snapshot_interval` | the full L2 book of every instrument is written to its `Snapshot_index` file (market-data) when an L2 update crosses this interval, so a replay can start from the last snapshot instead of the day's first frame; `0s` writes none |
 | `upload.command` | program and arguments; `{file}` becomes the absolute path of the closed `.zst`, `{rel}` its path relative to `data_dir` |
 | `upload.delete_after_upload` | remove the local file after the command succeeds |
 
