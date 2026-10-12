@@ -108,3 +108,43 @@ let%expect_test "per-minute L2 snapshots by default" =
   [%expect {| () |}];
   return ()
 ;;
+
+(* A stalled disk, made here with a FIFO nobody reads in place of the day's event log:
+   opening it never returns, so nothing reaches the file. The writer still drains the feed
+   without pushback, so the events wait in the writer's memory, not in the feed's pipes
+   (which [norm_pipe_length] would show). *)
+let%expect_test "a stalled event log buffers events in memory, not in the feed" =
+  let dir = temp_dir () in
+  let path = Event_log.path ~dir btc Trades (Date.of_string "2026-10-12") in
+  let%bind () = Unix.mkdir ~p:() (Filename.dirname path) in
+  let%bind () = Unix.mkfifo path in
+  let t = Market_recorder.Norm_writer.create ~data_dir:dir () in
+  let reader, writer = Pipe.create () in
+  let feed = Replay_feed.of_events ~speed:0. reader in
+  let seen = ref 0 in
+  let consumed =
+    Market_recorder.Norm_writer.consume t feed ~on_event:(fun _ -> incr seen)
+  in
+  let n = 10_000 in
+  for i = 1 to n do
+    Pipe.write_without_pushback
+      writer
+      (trade
+         ~ts:(sprintf "2026-10-12T10:00:%02d.%06dZ" (i / 1000) (i % 1000))
+         ~id:(Int.to_string i))
+  done;
+  Pipe.close writer;
+  let%bind () = consumed in
+  let flushed = Market_recorder.Norm_writer.flush t in
+  let%bind () = Clock_ns.after (Time_ns.Span.of_int_ms 300) in
+  print_s
+    [%message
+      "stalled"
+        ~appended:(!seen : int)
+        ~feed_pipe_length:(Pipe.length reader : int)
+        ~flushed:(Deferred.is_determined flushed : bool)
+        ~files:(Market_recorder.Norm_writer.files t : string list)];
+  [%expect
+    {| (stalled (appended 10000) (feed_pipe_length 0) (flushed false) (files ())) |}];
+  return ()
+;;
