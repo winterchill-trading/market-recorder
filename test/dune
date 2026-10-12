@@ -3,6 +3,7 @@
  (libraries
   core
   core_unix
+  core_unix.sys_unix
   async
   uri
   zstd
@@ -19,6 +20,8 @@
   deribit-feed
   bitget-feed)
  (inline_tests
+  (deps
+   (glob_files %{project_root}/examples/*.sexp))
   (flags
    (:standard -source-tree-root .)))
  (preprocess

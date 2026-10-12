@@ -156,3 +156,28 @@ let%expect_test "new venue endpoints resolve to feed configs" =
     ((url wss://ws.bitget.com/v2/ws/public) (inst_type USDT-FUTURES))
     |}]
 ;;
+
+let%expect_test "every example config parses and validates" =
+  let dir = "../examples" in
+  Sys_unix.readdir dir
+  |> Array.to_list
+  |> List.filter ~f:(String.is_suffix ~suffix:".sexp")
+  |> List.sort ~compare:String.compare
+  |> List.iter ~f:(fun name ->
+    match Config.load (dir ^/ name) with
+    | Ok (config : Config.t) ->
+      print_s
+        [%message
+          name
+            ~venues:(List.length config.venues : int)
+            ~streams:
+              (List.sum (module Int) config.venues ~f:(fun v ->
+                 List.length v.symbols * List.length v.streams)
+               : int)]
+    | Error e -> print_s [%message name (e : Error.t)]);
+  [%expect
+    {|
+    (mainnet-all.sexp (venues 8) (streams 31))
+    (sims.sexp (venues 3) (streams 22))
+    |}]
+;;
