@@ -118,7 +118,7 @@ let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
         ~symbols
         ~streams
     in
-    ( Market_data.Feed.With_gaps.of_feed (Coinbase_feed.Live_feed.feed t)
+    ( Coinbase_feed.Live_feed.feed_with_gaps t
     , fun () ->
         let { Coinbase_feed.Live_feed.Stats.frames; parse_errors; reconnects } =
           Coinbase_feed.Live_feed.stats t
