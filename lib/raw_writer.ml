@@ -87,20 +87,26 @@ let open_files t =
   |> List.sort ~compare:String.compare
 ;;
 
+(* Lines stay in [file.buffer] until the file is open. Writing through [upon file.writer]
+   instead raced with [finish]: handlers of one ivar run in no fixed order, so
+   [Writer.close] could start before a pending [Writer.write], which then hit the closed
+   descriptor ([EBADF] from [fcntl]). *)
 let write_out (file : File.t) =
-  if Buffer.length file.buffer > 0
-  then (
-    let data = Buffer.contents file.buffer in
-    Buffer.clear file.buffer;
-    upon file.writer (fun w -> Writer.write w data))
+  match Deferred.peek file.writer with
+  | None -> ()
+  | Some w ->
+    if Buffer.length file.buffer > 0
+    then (
+      Writer.write w (Buffer.contents file.buffer);
+      Buffer.clear file.buffer)
 ;;
 
 (* Writes the rest of the buffer, closes the file and compresses it. Tracked in
    [t.closing] so that [close] can wait for every compression. *)
 let finish t (file : File.t) =
-  write_out file;
   let d =
     let%bind w = file.writer in
+    write_out file;
     let%bind () = Writer.close w in
     let%map compressed = compress_file file.path in
     t.on_closed compressed
@@ -161,10 +167,10 @@ let disconnect t ~venue ~stream ~symbol ~recv_ts =
 ;;
 
 let flush t =
-  Hashtbl.iter t.files ~f:write_out;
   Hashtbl.data t.files
   |> Deferred.List.iter ~how:`Parallel ~f:(fun (file : File.t) ->
     let%bind w = file.writer in
+    write_out file;
     Writer.flushed w)
 ;;
 
