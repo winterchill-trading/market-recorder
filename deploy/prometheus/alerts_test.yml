@@ -1,0 +1,29 @@
+# promtool test rules deploy/prometheus/alerts_test.yml
+rule_files:
+  - alerts.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      # okx: one parse error every minute for 15 minutes
+      - series: 'market_recorder_parse_errors_total{instance="rec:9100",venue="okx"}'
+        values: '0+1x15'
+      # bybit: one burst, then nothing
+      - series: 'market_recorder_parse_errors_total{instance="rec:9100",venue="bybit"}'
+        values: '0 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: MarketRecorderParseErrors
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: MarketRecorderParseErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              instance: rec:9100
+              venue: okx
+            exp_annotations:
+              summary: "okx frames fail to parse on rec:9100"
+              description: >-
+                okx drops 16.67m frames per second as undecodable. The raw minute files
+                still hold them; check the recorder log and the client's normalizer.
