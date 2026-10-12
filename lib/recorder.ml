@@ -113,7 +113,9 @@ let start (config : Config.t) =
           [%message "raw writer failed" (error : Error.t)])
       ()
   in
-  let norm = Norm_writer.create ~data_dir () in
+  let norm =
+    Norm_writer.create ~snapshot_interval:config.snapshot_interval ~data_dir ()
+  in
   let metrics = Metrics.create () in
   Metrics.set_flush_error_source metrics (fun () -> Raw_writer.last_error raw);
   Option.iter uploader ~f:(fun u ->

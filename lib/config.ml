@@ -139,6 +139,8 @@ type t =
   ; http_port : int [@default 9100]
   ; venues : Venue_entry.t list
   ; upload : Upload.t option [@sexp.option]
+  ; snapshot_interval : Time_ns.Span.t
+       [@default Time_ns.Span.of_min 1.] [@sexp_drop_default Time_ns.Span.equal]
   }
 [@@deriving sexp, compare, equal]
 
@@ -219,6 +221,9 @@ let validate t =
       ; (match t.upload with
          | Some { command = []; _ } -> [ "upload: empty command" ]
          | _ -> [])
+      ; (if Time_ns.Span.( < ) t.snapshot_interval Time_ns.Span.zero
+         then [ "snapshot_interval: negative" ]
+         else [])
       ]
   in
   match errors with

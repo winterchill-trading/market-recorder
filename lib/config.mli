@@ -77,6 +77,10 @@ type t =
   ; http_port : int [@default 9100]
   ; venues : Venue_entry.t list
   ; upload : Upload.t option [@sexp.option]
+  ; snapshot_interval : Time_ns.Span.t
+       [@default Time_ns.Span.of_min 1.] [@sexp_drop_default Time_ns.Span.equal]
+  (** full L2 books of every instrument go to the event log's [_snapshots] files at this
+      interval (default [1m]); [0s] turns them off *)
   }
 [@@deriving sexp, compare, equal]
 
