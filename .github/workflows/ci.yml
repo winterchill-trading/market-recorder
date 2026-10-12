@@ -35,6 +35,11 @@ jobs:
       - run: opam exec -- dune build
       - run: opam exec -- dune test
       - run: MARKET_RECORDER=_build/default/bin/main.exe scripts/test-replicate-day.sh
+      - name: memtrace smoke test (MEMTRACE writes a trace)
+        run: |
+          rm -f /tmp/x.ctf
+          MEMTRACE=/tmp/x.ctf _build/default/bin/main.exe -help >/dev/null
+          test -s /tmp/x.ctf
   e2e-sims:
     # A dune workspace holding market-recorder and the three simulators; every other
     # sibling comes from the pinned opam switch.
