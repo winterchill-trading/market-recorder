@@ -25,6 +25,12 @@ val create : ?now:(unit -> Time_ns.t) -> unit -> t
 val register : t -> Key.t -> unit
 
 val frame : t -> Key.t -> recv_ts:Time_ns.t -> bytes:int -> unit
+
+(** [clamp_recv_ts t key recv_ts] is [recv_ts], or the [recv_ts] of the last {!frame} of
+    [key] when that is later (the wall clock stepped back), counting each such frame.
+    Keeps the receive times of a stream non-decreasing. *)
+val clamp_recv_ts : t -> Key.t -> Time_ns.t -> Time_ns.t
+
 val event : t -> Key.t -> unit
 
 (** Uploader gauges, read when rendering. *)

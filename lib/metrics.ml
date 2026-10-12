@@ -15,6 +15,7 @@ module Counters = struct
     ; mutable frames : int
     ; mutable bytes : int
     ; mutable events : int
+    ; mutable clamped : int
     ; mutable last_frame : Time_ns.t option
     }
 end
@@ -35,6 +36,7 @@ let get t key =
     ; frames = 0
     ; bytes = 0
     ; events = 0
+    ; clamped = 0
     ; last_frame = None
     })
 ;;
@@ -46,6 +48,15 @@ let frame t key ~recv_ts ~bytes =
   c.frames <- c.frames + 1;
   c.bytes <- c.bytes + bytes;
   c.last_frame <- Some recv_ts
+;;
+
+let clamp_recv_ts t key recv_ts =
+  let c = get t key in
+  match c.last_frame with
+  | Some last when Time_ns.( < ) recv_ts last ->
+    c.clamped <- c.clamped + 1;
+    last
+  | _ -> recv_ts
 ;;
 
 let event t key =
@@ -127,6 +138,11 @@ let render t =
     ~type_:"counter"
     ~help:"Normalized events written."
     (fun c -> Int.to_string c.events);
+  family
+    "market_recorder_clamped_frames_total"
+    ~type_:"counter"
+    ~help:"Raw frames whose recv_ts went backwards and was raised to the previous one."
+    (fun c -> Int.to_string c.clamped);
   family
     "market_recorder_last_frame_age_seconds"
     ~type_:"gauge"

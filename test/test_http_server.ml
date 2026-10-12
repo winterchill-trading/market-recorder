@@ -49,6 +49,9 @@ let%expect_test "healthz and metrics over http" =
     # HELP market_recorder_events_total Normalized events written.
     # TYPE market_recorder_events_total counter
     market_recorder_events_total{venue="bybit",stream="bbo",symbol="BTCUSDT"} 0
+    # HELP market_recorder_clamped_frames_total Raw frames whose recv_ts went backwards and was raised to the previous one.
+    # TYPE market_recorder_clamped_frames_total counter
+    market_recorder_clamped_frames_total{venue="bybit",stream="bbo",symbol="BTCUSDT"} 0
     # HELP market_recorder_last_frame_age_seconds Seconds since the last raw frame (since start if none yet).
     # TYPE market_recorder_last_frame_age_seconds gauge
     market_recorder_last_frame_age_seconds{venue="bybit",stream="bbo",symbol="BTCUSDT"} 60.000
