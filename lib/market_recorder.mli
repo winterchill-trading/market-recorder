@@ -11,3 +11,6 @@ module Warnings = Warnings
 module Recorder = Recorder
 module Http_server = Http_server
 module Status_table = Status_table
+
+(** [rebuild-norm] with every venue's normalizer. *)
+module Rebuild = Rebuild
