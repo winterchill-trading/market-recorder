@@ -16,6 +16,7 @@ module Counters = struct
     ; mutable bytes : int
     ; mutable events : int
     ; mutable clamped : int
+    ; mutable pipe_length : unit -> int
     ; mutable last_frame : Time_ns.t option
     }
 end
@@ -42,6 +43,7 @@ let get t key =
     ; bytes = 0
     ; events = 0
     ; clamped = 0
+    ; pipe_length = (fun () -> 0)
     ; last_frame = None
     })
 ;;
@@ -69,6 +71,7 @@ let event t key =
   c.events <- c.events + 1
 ;;
 
+let set_pipe_length t key f = (get t key).pipe_length <- f
 let set_upload_source t f = t.upload_source <- Some f
 let set_flush_error_source t f = t.flush_error_source <- f
 
@@ -164,6 +167,11 @@ let render t =
     ~type_:"counter"
     ~help:"Raw frames whose recv_ts went backwards and was raised to the previous one."
     (fun c -> Int.to_string c.clamped);
+  family
+    "market_recorder_norm_pipe_length"
+    ~type_:"gauge"
+    ~help:"Normalized events waiting in the pipe to the event log writer."
+    (fun c -> Int.to_string (c.pipe_length ()));
   family
     "market_recorder_last_frame_age_seconds"
     ~type_:"gauge"

@@ -33,6 +33,9 @@ val clamp_recv_ts : t -> Key.t -> Time_ns.t -> Time_ns.t
 
 val event : t -> Key.t -> unit
 
+(** Where the [norm_pipe_length] gauge of a stream reads its pipe length from. *)
+val set_pipe_length : t -> Key.t -> (unit -> int) -> unit
+
 (** Uploader gauges, read when rendering. *)
 val set_upload_source : t -> (unit -> int * int * int) -> unit
 
