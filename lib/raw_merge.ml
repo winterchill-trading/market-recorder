@@ -215,3 +215,217 @@ let merge_minute ~window ~minute (carry : Carry.t) ~a ~b =
   in
   lines, counts, { Carry.minute; entries = next_carry }
 ;;
+
+module Series = struct
+  type t =
+    { venue : Market_data.Venue.t
+    ; stream : Market_data.Stream.t
+    ; symbol_dir : string
+    }
+  [@@deriving sexp_of, compare]
+
+  let of_file (f : Raw_minute.File.t) =
+    { venue = f.venue; stream = f.stream; symbol_dir = f.symbol_dir }
+  ;;
+end
+
+module Report = struct
+  type t =
+    { date : Date.t
+    ; window : Time_ns.Span.t
+    ; series : (Series.t * Counts.t) list
+    ; total : Counts.t
+    }
+  [@@deriving sexp_of]
+
+  let quote s =
+    let b = Buffer.create (String.length s + 2) in
+    Buffer.add_char b '"';
+    String.iter s ~f:(fun c ->
+      match c with
+      | '"' -> Buffer.add_string b "\\\""
+      | '\\' -> Buffer.add_string b "\\\\"
+      | c when Char.to_int c < 0x20 ->
+        Buffer.add_string b (sprintf "\\u%04x" (Char.to_int c))
+      | c -> Buffer.add_char b c);
+    Buffer.add_char b '"';
+    Buffer.contents b
+  ;;
+
+  let counts_fields (c : Counts.t) =
+    sprintf
+      {|"minutes": %d, "only_a": %d, "only_b": %d, "both": %d, "gaps_closed": %d, "gaps_kept": %d|}
+      c.minutes
+      c.only_a
+      c.only_b
+      c.both
+      c.gaps_closed
+      c.gaps_kept
+  ;;
+
+  let to_json t =
+    let series =
+      List.map t.series ~f:(fun ((s : Series.t), c) ->
+        sprintf
+          {|    {"venue": %s, "stream": %s, "symbol": %s, %s}|}
+          (quote (Market_data.Venue.to_string s.venue))
+          (quote (Market_data.Stream.to_string s.stream))
+          (quote s.symbol_dir)
+          (counts_fields c))
+    in
+    sprintf
+      "{\n\
+      \  \"date\": %s,\n\
+      \  \"window_ms\": %d,\n\
+      \  \"total\": {%s},\n\
+      \  \"series\": [\n\
+       %s\n\
+      \  ]\n\
+       }\n"
+      (quote (Date.to_string t.date))
+      (Float.iround_nearest_exn (Time_ns.Span.to_ms t.window))
+      (counts_fields t.total)
+      (String.concat ~sep:",\n" series)
+  ;;
+end
+
+let default_window = Time_ns.Span.of_sec 5.
+
+let read_copy files =
+  Deferred.Or_error.List.concat_map
+    ~how:`Sequential
+    files
+    ~f:(fun (f : Raw_minute.File.t) ->
+      Raw_minute.read f.path
+      |> Deferred.Or_error.tag_s ~tag:[%message "reading raw minute file" ~path:f.path])
+;;
+
+let run ?(window = default_window) ~a_dir ~b_dir ~out_dir date =
+  let%bind existing = Raw_minute.files ~data_dir:out_dir date in
+  if not (List.is_empty existing)
+  then
+    Deferred.Or_error.error_s
+      [%message
+        "output already holds raw files of this day"
+          (out_dir : string)
+          ~first:(List.hd_exn existing).path]
+  else (
+    let%bind a_files = Raw_minute.files ~data_dir:a_dir date
+    and b_files = Raw_minute.files ~data_dir:b_dir date in
+    let key (_, (f : Raw_minute.File.t)) = Series.of_file f, f.minute in
+    let tagged =
+      List.map a_files ~f:(fun f -> A, f) @ List.map b_files ~f:(fun f -> B, f)
+      |> List.stable_sort ~compare:(fun x y ->
+        [%compare: Series.t * Time_ns.t] (key x) (key y))
+    in
+    let series =
+      List.group tagged ~break:(fun x y ->
+        Series.compare (fst (key x)) (fst (key y)) <> 0)
+    in
+    let errors = ref [] in
+    let writer =
+      Raw_writer.create
+        ~now:(fun () -> Time_ns.max_value_representable)
+        ~on_error:(fun ~venue:_ ~stream:_ ~symbol:_ e -> errors := e :: !errors)
+        ~data_dir:out_dir
+        ~on_closed:ignore
+        ()
+    in
+    let%bind result =
+      Deferred.Or_error.List.map ~how:`Sequential series ~f:(fun files ->
+        let s = fst (key (List.hd_exn files)) in
+        let minutes =
+          List.group files ~break:(fun x y ->
+            not (Time_ns.equal (snd (key x)) (snd (key y))))
+        in
+        let%map.Deferred.Or_error _carry, counts =
+          Deferred.Or_error.List.fold
+            minutes
+            ~init:(Carry.empty, Counts.zero)
+            ~f:(fun (carry, total) files ->
+              let minute = snd (key (List.hd_exn files)) in
+              let copy side =
+                match
+                  List.filter_map files ~f:(fun (s, f) ->
+                    Option.some_if (equal_side s side) f)
+                with
+                | [] -> return (Ok None)
+                | files -> read_copy files |> Deferred.Or_error.map ~f:Option.some
+              in
+              let%bind.Deferred.Or_error a = copy A in
+              let%bind.Deferred.Or_error b = copy B in
+              let lines, counts, carry = merge_minute ~window ~minute carry ~a ~b in
+              List.iter lines ~f:(fun (line : Line.t) ->
+                match line with
+                | Frame { recv_ts; payload } ->
+                  Raw_writer.write
+                    writer
+                    ~venue:s.venue
+                    ~stream:s.stream
+                    ~symbol:s.symbol_dir
+                    ~recv_ts
+                    payload
+                | Disconnect ->
+                  Raw_writer.disconnect
+                    writer
+                    ~venue:s.venue
+                    ~stream:s.stream
+                    ~symbol:s.symbol_dir
+                    ~recv_ts:minute);
+              let%map () = Raw_writer.roll writer in
+              Ok (carry, Counts.(total + counts)))
+        in
+        s, counts)
+    in
+    let%bind () = Raw_writer.close writer in
+    match result, !errors with
+    | Error e, _ -> return (Error e)
+    | Ok _, (_ :: _ as errors) ->
+      Deferred.Or_error.error_s
+        [%message "writing merged raw files failed" (errors : Error.t list)]
+    | Ok series, [] ->
+      let report =
+        { Report.date
+        ; window
+        ; series
+        ; total =
+            List.fold series ~init:Counts.zero ~f:(fun acc (_, c) -> Counts.(acc + c))
+        }
+      in
+      let dir = out_dir ^/ "_merge" in
+      let%bind () = Unix.mkdir ~p:() dir in
+      let%map () =
+        Writer.save
+          (dir ^/ Date.to_string date ^ ".json")
+          ~contents:(Report.to_json report)
+      in
+      Ok report)
+;;
+
+let command =
+  Command.async_or_error
+    ~summary:"Merge two collectors' raw minute files of a day into one canonical copy"
+    ~readme:(fun () ->
+      "Reads <a>/raw and <b>/raw for the UTC day and writes <out>/raw in the same \
+       layout: each frame once (matched by its text within -window, earliest recv_ts \
+       kept), and a disconnect line only where both copies had a gap. Writes a \
+       per-series report to <out>/_merge/<date>.json and prints the totals.")
+    (let%map_open.Command a_dir =
+       flag
+         "-a"
+         (required string)
+         ~doc:"DIR first collector's data directory (holds raw/)"
+     and b_dir = flag "-b" (required string) ~doc:"DIR second collector's data directory"
+     and out_dir =
+       flag "-out" (required string) ~doc:"DIR where to write the merged raw/ and _merge/"
+     and date = flag "-date" (required date) ~doc:"YYYY-MM-DD UTC day to merge"
+     and window =
+       flag
+         "-window"
+         (optional_with_default default_window Time_ns.Span.arg_type)
+         ~doc:"SPAN largest recv_ts difference of one frame's two copies (default 5s)"
+     in
+     fun () ->
+       let%map.Deferred.Or_error report = run ~window ~a_dir ~b_dir ~out_dir date in
+       Core.print_s [%sexp (report.total : Counts.t)])
+;;

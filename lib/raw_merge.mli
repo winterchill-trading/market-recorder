@@ -49,3 +49,40 @@ val merge_minute
   -> a:Market_data.Raw_minute.Line.t list option
   -> b:Market_data.Raw_minute.Line.t list option
   -> Market_data.Raw_minute.Line.t list * Counts.t * Carry.t
+
+module Series : sig
+  type t =
+    { venue : Market_data.Venue.t
+    ; stream : Market_data.Stream.t
+    ; symbol_dir : string
+    }
+  [@@deriving sexp_of, compare]
+end
+
+module Report : sig
+  type t =
+    { date : Date.t
+    ; window : Time_ns.Span.t
+    ; series : (Series.t * Counts.t) list
+    ; total : Counts.t
+    }
+  [@@deriving sexp_of]
+
+  val to_json : t -> string
+end
+
+val default_window : Time_ns.Span.t
+
+(** Merges every raw minute file of the UTC [date] under [<a_dir>/raw] and [<b_dir>/raw]
+    into [<out_dir>/raw] with {!Raw_writer} (compressed minute files), and writes the
+    report to [<out_dir>/_merge/<date>.json]. Fails without writing if [out_dir] already
+    holds raw files of [date]. *)
+val run
+  :  ?window:Time_ns.Span.t
+  -> a_dir:string
+  -> b_dir:string
+  -> out_dir:string
+  -> Date.t
+  -> Report.t Or_error.t Deferred.t
+
+val command : Command.t
