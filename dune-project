@@ -29,6 +29,7 @@
   zstd
   dune-build-info
   ppx_jane
+  (async_websocket :with-test)
   market-data
   hl-client
   binance-client
