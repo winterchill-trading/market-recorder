@@ -11,3 +11,4 @@ module Status_table = Status_table
 module Rebuild = Rebuild
 module Raw_merge = Raw_merge
 module Venue_seq = Venue_seq
+module Seq_gaps = Seq_gaps

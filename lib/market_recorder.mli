@@ -20,3 +20,6 @@ module Raw_merge = Raw_merge
 
 (** Venue sequence numbers in raw frames, for the merge. *)
 module Venue_seq = Venue_seq
+
+(** Exact gaps in a venue sequence. *)
+module Seq_gaps = Seq_gaps
