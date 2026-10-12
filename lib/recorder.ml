@@ -1,8 +1,18 @@
 open! Core
 open! Async
 
+module Status = struct
+  type t =
+    { open_minute_files : string list
+    ; pending_uploads : string list
+    ; streams : Metrics.Stream_status.t list
+    }
+  [@@deriving sexp_of]
+end
+
 type t =
-  { raw : Raw_writer.t
+  { data_dir : string
+  ; raw : Raw_writer.t
   ; norm : Norm_writer.t
   ; uploader : Uploader.t option
   ; metrics : Metrics.t
@@ -13,6 +23,15 @@ type t =
   }
 
 let metrics t = t.metrics
+
+let status t =
+  let relative = List.map ~f:(Uploader.relative ~data_dir:t.data_dir) in
+  { Status.open_minute_files = relative (Raw_writer.open_files t.raw)
+  ; pending_uploads =
+      relative (Option.value_map t.uploader ~default:[] ~f:Uploader.pending)
+  ; streams = Metrics.streams t.metrics
+  }
+;;
 
 let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
   let symbols = [ symbol ] in
@@ -142,7 +161,8 @@ let start (config : Config.t) =
         , Norm_writer.consume norm feed ~on_event:(fun event ->
             Metrics.event metrics (key (Market_data.Event.stream event))) )))
   in
-  { raw
+  { data_dir
+  ; raw
   ; norm
   ; uploader
   ; metrics
