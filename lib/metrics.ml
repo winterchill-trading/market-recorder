@@ -24,10 +24,15 @@ type t =
   { now : unit -> Time_ns.t
   ; counters : Counters.t Hashtbl.M(Key).t
   ; mutable upload_source : (unit -> int * int * int) option
+  ; mutable flush_error_source : unit -> (Error.t * Time_ns.t) option
   }
 
 let create ?(now = Time_ns.now) () =
-  { now; counters = Hashtbl.create (module Key); upload_source = None }
+  { now
+  ; counters = Hashtbl.create (module Key)
+  ; upload_source = None
+  ; flush_error_source = (fun () -> None)
+  }
 ;;
 
 let get t key =
@@ -65,6 +70,20 @@ let event t key =
 ;;
 
 let set_upload_source t f = t.upload_source <- Some f
+let set_flush_error_source t f = t.flush_error_source <- f
+
+module Flush_error = struct
+  type t =
+    { error : Error.t
+    ; age : Time_ns.Span.t
+    }
+  [@@deriving sexp_of]
+end
+
+let flush_error t =
+  Option.map (t.flush_error_source ()) ~f:(fun (error, at) ->
+    { Flush_error.error; age = Time_ns.diff (t.now ()) at })
+;;
 
 let age t (c : Counters.t) =
   Time_ns.diff (t.now ()) (Option.value c.last_frame ~default:c.registered)
@@ -88,7 +107,9 @@ let sorted t =
   Hashtbl.to_alist t.counters |> List.sort ~compare:(fun (a, _) (b, _) -> Key.compare a b)
 ;;
 
-let health ?(max_age = Time_ns.Span.of_sec 30.) t =
+let default_max_age = Time_ns.Span.of_sec 30.
+
+let health ?(max_age = default_max_age) t =
   let stale =
     List.filter_map (sorted t) ~f:(fun (key, c) ->
       let last_frame_age = age t c in

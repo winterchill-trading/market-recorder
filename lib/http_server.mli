@@ -1,7 +1,9 @@
 (** The monitoring endpoint.
 
     - [GET /healthz]: [200 ok] when every recorded stream delivered a frame in the last
-      30s, else [503] with the stale streams as a sexp.
+      30s and the raw writer has not failed in that time, else [503] with the stale
+      streams as a sexp. The last raw writer failure and its age follow on their own line
+      whenever there was one.
     - [GET /metrics]: {!Metrics.render}, as [text/plain; version=0.0.4].
 
     Anything else is [404]. *)
@@ -19,7 +21,7 @@ module Response : sig
 end
 
 (** The response for a request path. *)
-val respond : Metrics.t -> path:string -> Response.t
+val respond : ?max_age:Time_ns.Span.t -> Metrics.t -> path:string -> Response.t
 
 type t
 

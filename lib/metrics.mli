@@ -36,6 +36,20 @@ val event : t -> Key.t -> unit
 (** Uploader gauges, read when rendering. *)
 val set_upload_source : t -> (unit -> int * int * int) -> unit
 
+(** Where {!flush_error} reads the last raw writer failure and its time from. *)
+val set_flush_error_source : t -> (unit -> (Error.t * Time_ns.t) option) -> unit
+
+module Flush_error : sig
+  type t =
+    { error : Error.t
+    ; age : Time_ns.Span.t
+    }
+  [@@deriving sexp_of]
+end
+
+(** The last raw writer failure, if any, with its age. *)
+val flush_error : t -> Flush_error.t option
+
 module Health : sig
   type stale =
     { key : Key.t
@@ -52,6 +66,8 @@ end
 
 (** [Stale] lists every registered stream without a frame in the last [max_age] (default
     30s). *)
+val default_max_age : Time_ns.Span.t
+
 val health : ?max_age:Time_ns.Span.t -> t -> Health.t
 
 (** Prometheus text exposition format 0.0.4. *)

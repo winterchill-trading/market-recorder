@@ -12,16 +12,34 @@ end
 
 let text = "text/plain; charset=utf-8"
 
-let respond metrics ~path : Response.t =
+let respond ?max_age metrics ~path : Response.t =
   match path with
   | "/healthz" ->
-    (match Metrics.health metrics with
-     | Healthy -> { status = `OK; content_type = text; body = "ok\n" }
-     | Stale _ as health ->
-       { status = `Service_unavailable
-       ; content_type = text
-       ; body = Sexp.to_string_hum [%sexp (health : Metrics.Health.t)] ^ "\n"
-       })
+    let health = Metrics.health ?max_age metrics in
+    let flush_error = Metrics.flush_error metrics in
+    let max_age = Option.value max_age ~default:Metrics.default_max_age in
+    let flush_failing =
+      Option.exists flush_error ~f:(fun e -> Time_ns.Span.( <= ) e.age max_age)
+    in
+    let status =
+      match health, flush_failing with
+      | Healthy, false -> `OK
+      | Stale _, _ | _, true -> `Service_unavailable
+    in
+    let lines =
+      (match health, flush_failing with
+       | Healthy, false -> [ "ok" ]
+       | Healthy, true -> []
+       | Stale _, _ -> [ Sexp.to_string_hum [%sexp (health : Metrics.Health.t)] ])
+      @ Option.to_list
+          (Option.map flush_error ~f:(fun e ->
+             Sexp.to_string_hum
+               (List [ Atom "last_flush_error"; [%sexp (e : Metrics.Flush_error.t)] ])))
+    in
+    { status
+    ; content_type = text
+    ; body = String.concat (List.map lines ~f:(fun l -> l ^ "\n"))
+    }
   | "/metrics" ->
     { status = `OK
     ; content_type = "text/plain; version=0.0.4; charset=utf-8"
