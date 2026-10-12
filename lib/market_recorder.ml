@@ -9,3 +9,4 @@ module Recorder = Recorder
 module Http_server = Http_server
 module Status_table = Status_table
 module Rebuild = Rebuild
+module Raw_merge = Raw_merge

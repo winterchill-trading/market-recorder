@@ -14,3 +14,6 @@ module Status_table = Status_table
 
 (** [rebuild-norm] with every venue's normalizer. *)
 module Rebuild = Rebuild
+
+(** [merge]: two collectors' raw minute files into one canonical copy. *)
+module Raw_merge = Raw_merge
