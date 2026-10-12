@@ -44,6 +44,10 @@ let%expect_test "counters, health and exposition" =
     # TYPE market_recorder_clamped_frames_total counter
     market_recorder_clamped_frames_total{venue="hyperliquid",stream="l2",symbol="BTC"} 0
     market_recorder_clamped_frames_total{venue="binance",stream="trades",symbol="BTCUSDT"} 0
+    # HELP market_recorder_norm_pipe_length Normalized events waiting in the pipe to the event log writer.
+    # TYPE market_recorder_norm_pipe_length gauge
+    market_recorder_norm_pipe_length{venue="hyperliquid",stream="l2",symbol="BTC"} 0
+    market_recorder_norm_pipe_length{venue="binance",stream="trades",symbol="BTCUSDT"} 0
     # HELP market_recorder_last_frame_age_seconds Seconds since the last raw frame (since start if none yet).
     # TYPE market_recorder_last_frame_age_seconds gauge
     market_recorder_last_frame_age_seconds{venue="hyperliquid",stream="l2",symbol="BTC"} 35.000
@@ -92,5 +96,21 @@ let%expect_test "recv_ts is clamped to non-decreasing per stream" =
     market_recorder_clamped_frames_total{venue="bybit",stream="trades",symbol="BTCUSDT"} 0
     market_recorder_clamped_frames_total{venue="bybit",stream="bbo",symbol="BTCUSDT"} 2
     |}];
+  return ()
+;;
+
+let%expect_test "norm pipe length gauge" =
+  let t = Metrics.create ~now:(fun () -> time "2026-10-12T09:00:00Z") () in
+  let key : Metrics.Key.t = { venue = Kraken; stream = L2; symbol = "BTC/USD" } in
+  let r, w = Pipe.create () in
+  Metrics.set_pipe_length t key (fun () -> Pipe.length r);
+  Pipe.write_without_pushback w 1;
+  Pipe.write_without_pushback w 2;
+  Metrics.render t
+  |> String.split_lines
+  |> List.filter ~f:(String.is_prefix ~prefix:"market_recorder_norm_pipe")
+  |> List.iter ~f:print_endline;
+  [%expect
+    {| market_recorder_norm_pipe_length{venue="kraken",stream="l2",symbol="BTC/USD"} 2 |}];
   return ()
 ;;
