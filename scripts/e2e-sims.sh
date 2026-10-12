@@ -1,24 +1,31 @@
 #!/usr/bin/env bash
 # Records the three simulators for a while with examples/sims.sexp, checks the output
-# and stops everything. Run from the repo inside the multi-repo dune workspace.
+# and stops everything. Run from the repo inside the multi-repo dune workspace (or set
+# WORKSPACE to another workspace root holding the simulators and this repo).
+#
+# Fails (exit 1) when /healthz is not 200, a configured stream received no frame, an
+# upload failed or is still pending, the recorder exits non-zero, or a stream has no
+# compressed minute file, uploaded copy or event log.
 set -euo pipefail
 
 seconds=${1:-20}
 here=$(cd "$(dirname "$0")/.." && pwd)
-root=$(cd "$here/.." && pwd)
+root=${WORKSPACE:-$(cd "$here/.." && pwd)}
 build=${DUNE_BUILD_DIR:-$root/_build}
 out=/tmp/market-recorder-sims
+port=9910
 
-for port in 3510 3520 3530 9910; do
-  if lsof -iTCP:$port -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "port $port is busy" >&2
+for p in 3510 3520 3530 $port; do
+  if lsof -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "port $p is busy" >&2
     exit 1
   fi
 done
 
-(cd "$root" && opam exec --switch 5.2.0+ox -- dune build \
+(cd "$root" && opam exec --switch 5.2.0+ox -- dune build --root . \
   ./hl-sim/bin/main.exe ./binance-sim/bin/main.exe ./bybit-sim/bin/main.exe \
   ./market-recorder/bin/main.exe)
+recorder_exe=$build/default/market-recorder/bin/main.exe
 
 rm -rf "$out"
 mkdir -p "$out/logs"
@@ -34,27 +41,79 @@ pids+=($!)
 pids+=($!)
 sleep 3
 
-"$build/default/market-recorder/bin/main.exe" run -config "$here/examples/sims.sexp" \
-  2>"$out/logs/recorder.log" &
+"$recorder_exe" run -config "$here/examples/sims.sexp" 2>"$out/logs/recorder.log" &
 recorder=$!
 pids+=("$recorder")
 sleep "$seconds"
 
+problems=()
+problem() {
+  echo "PROBLEM: $*" >&2
+  problems+=("$*")
+}
+
 echo "== /healthz"
-curl -s -w '%{http_code}\n' localhost:9910/healthz
-echo "== /metrics"
-curl -s localhost:9910/metrics >"$out/metrics.txt"
-grep -v '^#' "$out/metrics.txt"
+code=$(curl -s -o "$out/healthz.txt" -w '%{http_code}' "localhost:$port/healthz" || true)
+cat "$out/healthz.txt" 2>/dev/null || true
+[[ $code == 200 ]] || problem "/healthz returned $code"
+
+echo "== /status"
+curl -s "localhost:$port/status" | head -20 || true
+
+echo "== status"
+"$recorder_exe" status -url "http://localhost:$port" || problem "status command failed"
+curl -s "localhost:$port/metrics" >"$out/metrics.txt" || true
+
+# every configured stream: frames > 0
+streams=$(grep '^market_recorder_frames_total{' "$out/metrics.txt" || true)
+[[ -n $streams ]] || problem "no streams in /metrics"
+while read -r line; do
+  [[ -z $line ]] && continue
+  value=${line##* }
+  [[ $value != 0 ]] || problem "no frames: ${line% *}"
+done <<<"$streams"
+failures=$(awk '$1 == "market_recorder_upload_failures_total" { print $2 }' "$out/metrics.txt")
+[[ ${failures:-0} == 0 ]] || problem "$failures upload command runs failed"
+if grep -qs last_flush_error "$out/healthz.txt"; then problem "raw writer failed"; fi
 
 kill -TERM "$recorder"
-wait "$recorder"
-echo "== recorder exit $?"
+status=0
+wait "$recorder" || status=$?
+echo "== recorder exit $status"
+[[ $status == 0 ]] || problem "recorder exited with $status"
 
 echo "== files"
 (cd "$out/data" && find . -type f | sort)
-echo "== remote"
-(cd "$out/remote" && find . -type f | sort)
+[[ ! -s $out/data/upload-pending.sexp || $(tr -d ' ()\n' <"$out/data/upload-pending.sexp") == "" ]] ||
+  problem "uploads left pending: $(cat "$out/data/upload-pending.sexp")"
+
+# each stream: a compressed minute, its uploaded copy and an event log
+while read -r line; do
+  [[ -z $line ]] && continue
+  labels=${line#*\{}
+  labels=${labels%%\}*}
+  venue=$(sed -E 's/.*venue="([^"]*)".*/\1/' <<<"$labels")
+  stream=$(sed -E 's/.*stream="([^"]*)".*/\1/' <<<"$labels")
+  symbol=$(sed -E 's/.*symbol="([^"]*)".*/\1/' <<<"$labels")
+  raw=raw/$venue/$stream/$symbol
+  zst=$(find "$out/data/$raw" -name '*.ndjson.zst' 2>/dev/null | head -1 || true)
+  [[ -n $zst ]] || problem "no compressed minute under $raw"
+  [[ -n $(find "$out/remote/$raw" -name '*.ndjson.zst' 2>/dev/null | head -1) ]] ||
+    problem "nothing uploaded under $raw"
+  [[ -n $(find "$out/data/$venue/$symbol/norm/$stream" -name '*.bin' 2>/dev/null | head -1) ]] ||
+    problem "no event log under $venue/$symbol/norm/$stream"
+  if [[ -n $zst ]]; then
+    zstd -dc "$zst" >/dev/null || problem "corrupt $zst"
+  fi
+done <<<"$streams"
+
 for f in $(find "$out/data/raw" -name '*.zst' | sort | head -3); do
   echo "== zstd -dc ${f#"$out"/data/} | head -2"
   zstd -dc "$f" | head -2 | cut -c1-200
 done
+
+if ((${#problems[@]} > 0)); then
+  echo "== FAILED: ${#problems[@]} problem(s)" >&2
+  exit 1
+fi
+echo "== OK"
