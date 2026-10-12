@@ -49,6 +49,10 @@ end
 val merge_minute
   :  ?identity:(string -> string option)
        (** a frame's identity; [None] (the default for every frame) matches by text *)
+  -> ?clock_error:Time_ns.Span.t
+       (** the summed clock error bound of the two collectors (default zero): it widens
+           [window], and when two copies' stamps differ by no more than it, copy A's is
+           kept, since the clocks cannot say which came first *)
   -> window:Time_ns.Span.t
   -> minute:Time_ns.t
   -> Carry.t
@@ -88,6 +92,7 @@ module Report : sig
   type t =
     { date : Date.t
     ; window : Time_ns.Span.t
+    ; clock_error : Time_ns.Span.t
     ; series : (Series.t * Counts.t) list
     ; findings : (Series.t * Findings.t) list
     ; total : Counts.t
@@ -108,6 +113,7 @@ val default_silence : Time_ns.Span.t
 val run
   :  ?window:Time_ns.Span.t
   -> ?silence:Time_ns.Span.t
+  -> ?clock_error:Time_ns.Span.t
   -> a_dir:string
   -> b_dir:string
   -> out_dir:string

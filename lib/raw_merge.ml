@@ -107,7 +107,16 @@ let parse ~identity ~side ~minute ~stop lines =
 let overlaps (s1, e1) (s2, e2) = Time_ns.(max s1 s2 <= min e1 e2)
 let text_identity (_ : string) = None
 
-let merge_minute ?(identity = text_identity) ~window ~minute (carry : Carry.t) ~a ~b =
+let merge_minute
+  ?(identity = text_identity)
+  ?(clock_error = Time_ns.Span.zero)
+  ~window
+  ~minute
+  (carry : Carry.t)
+  ~a
+  ~b
+  =
+  let window = Time_ns.Span.( + ) window clock_error in
   let stop = Time_ns.add minute Time_ns.Span.minute in
   let a_frames, a_gaps =
     parse ~identity ~side:A ~minute ~stop (Option.value a ~default:[])
@@ -192,7 +201,12 @@ let merge_minute ?(identity = text_identity) ~window ~minute (carry : Carry.t) ~
         if Time_ns.Span.( <= ) (Time_ns.abs_diff x.ts y.ts) window
         then (
           matched x.payload y.payload;
-          emit (if Time_ns.( <= ) x.ts y.ts then x else y);
+          (* inside the clock bound the stamps cannot order the copies: keep A's *)
+          emit
+            (if Time_ns.( <= ) x.ts y.ts
+                || Time_ns.Span.( <= ) (Time_ns.abs_diff x.ts y.ts) clock_error
+             then x
+             else y);
           go xs' ys')
         else if Time_ns.( < ) x.ts y.ts
         then (
@@ -277,6 +291,7 @@ module Report = struct
   type t =
     { date : Date.t
     ; window : Time_ns.Span.t
+    ; clock_error : Time_ns.Span.t
     ; series : (Series.t * Counts.t) list
     ; findings : (Series.t * Findings.t) list
     ; total : Counts.t
@@ -359,6 +374,7 @@ module Report = struct
       "{\n\
       \  \"date\": %s,\n\
       \  \"window_ms\": %d,\n\
+      \  \"clock_error_ms\": %d,\n\
       \  \"total\": {%s},\n\
       \  \"series\": [\n\
        %s\n\
@@ -366,6 +382,7 @@ module Report = struct
        }\n"
       (quote (Date.to_string t.date))
       (Float.iround_nearest_exn (Time_ns.Span.to_ms t.window))
+      (Float.iround_nearest_exn (Time_ns.Span.to_ms t.clock_error))
       (counts_fields t.total)
       (String.concat ~sep:",\n" series)
   ;;
@@ -386,6 +403,7 @@ let read_copy files =
 let run
   ?(window = default_window)
   ?(silence = default_silence)
+  ?(clock_error = Time_ns.Span.zero)
   ~a_dir
   ~b_dir
   ~out_dir
@@ -430,13 +448,14 @@ let run
         let s = fst (key (List.hd_exn files)) in
         let seq payload = Venue_seq.of_frame ~venue:s.venue ~stream:s.stream payload in
         let identity payload = (seq payload).identity in
+        let reorder = Time_ns.Span.( + ) window clock_error in
         let trackers =
           if Venue_seq.has_sequence ~venue:s.venue ~stream:s.stream
           then
             Some
-              ( Seq_gaps.create ~reorder:window ()
-              , Seq_gaps.create ~reorder:window ()
-              , Seq_gaps.create ~reorder:window () )
+              ( Seq_gaps.create ~reorder ()
+              , Seq_gaps.create ~reorder ()
+              , Seq_gaps.create ~reorder () )
           else None
         in
         let quiet = Silence.create ~threshold:silence ~start:day_start () in
@@ -468,7 +487,7 @@ let run
               let%bind.Deferred.Or_error a = copy A in
               let%bind.Deferred.Or_error b = copy B in
               let lines, counts, carry =
-                merge_minute ~identity ~window ~minute carry ~a ~b
+                merge_minute ~identity ~clock_error ~window ~minute carry ~a ~b
               in
               List.iter lines ~f:(fun (line : Line.t) ->
                 match line with
@@ -524,6 +543,7 @@ let run
       let report =
         { Report.date
         ; window
+        ; clock_error
         ; series
         ; findings = List.map results ~f:(fun (s, _, f) -> s, f)
         ; total =
@@ -569,10 +589,17 @@ let command =
          ~doc:
            "SPAN a longer stretch without frames on a ticking stream is a suspected gap \
             (default 10s)"
+     and clock_error =
+       flag
+         "-clock-error"
+         (optional_with_default Time_ns.Span.zero Time_ns.Span.arg_type)
+         ~doc:
+           "SPAN the two collectors' summed clock error bound: widens -window, and \
+            copies closer than it keep collector A's stamp (default 0s)"
      in
      fun () ->
        let%map.Deferred.Or_error report =
-         run ~window ~silence ~a_dir ~b_dir ~out_dir date
+         run ~window ~silence ~clock_error ~a_dir ~b_dir ~out_dir date
        in
        Core.print_s [%sexp (report.total : Counts.t)])
 ;;

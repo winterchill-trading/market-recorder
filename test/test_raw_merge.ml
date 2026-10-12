@@ -18,10 +18,11 @@ let print_lines l =
       printf "%s %s\n" (Raw_writer.format_ts recv_ts) payload)
 ;;
 
-let merge ?identity ?(carry = Raw_merge.Carry.empty) ?(minute = minute) a b =
+let merge ?identity ?clock_error ?(carry = Raw_merge.Carry.empty) ?(minute = minute) a b =
   let lines, counts, carry =
     Raw_merge.merge_minute
       ?identity
+      ?clock_error
       ~window
       ~minute
       carry
@@ -188,6 +189,30 @@ let%expect_test "frames with the same venue sequence are one message" =
   return ()
 ;;
 
+let%expect_test "the clock bound widens the window and stops ordering close copies" =
+  let a = Some [ frame "01.000000" "x1"; frame "10.000000" "x2" ]
+  and b = Some [ frame "00.999000" "x1"; frame "15.500000" "x2" ] in
+  (* without a bound: B's earlier x1 wins, x2 is 5.5 s apart and stays twice *)
+  let (_ : Raw_merge.Carry.t) = merge a b in
+  [%expect
+    {|
+    2026-10-12T13:35:00.999000Z x1
+    2026-10-12T13:35:10.000000Z x2
+    2026-10-12T13:35:15.500000Z x2
+    ((minutes 1) (only_a 1) (only_b 1) (both 1) (gaps_closed 0) (gaps_kept 0)
+     (text_differs 0))
+    |}];
+  let (_ : Raw_merge.Carry.t) = merge ~clock_error:(Time_ns.Span.of_sec 1.) a b in
+  [%expect
+    {|
+    2026-10-12T13:35:01.000000Z x1
+    2026-10-12T13:35:10.000000Z x2
+    ((minutes 1) (only_a 0) (only_b 0) (both 2) (gaps_closed 0) (gaps_kept 0)
+     (text_differs 0))
+    |}];
+  return ()
+;;
+
 let write_minute ~data_dir ~venue ~stream ~symbol ~name lines =
   let dir = data_dir ^/ "raw" ^/ venue ^/ stream ^/ symbol ^/ "2026/10/12" in
   let%bind () = Unix.mkdir ~p:() dir in
@@ -304,6 +329,7 @@ let%expect_test "merge a day of two collectors" =
     {
       "date": "2026-10-12",
       "window_ms": 5000,
+      "clock_error_ms": 0,
       "total": {"minutes": 3, "only_a": 0, "only_b": 3, "both": 3, "gaps_closed": 1, "gaps_kept": 0, "text_differs": 0},
       "series": [
         {"venue": "hyperliquid", "stream": "l2", "symbol": "BTC", "minutes": 1, "only_a": 0, "only_b": 0, "both": 1, "gaps_closed": 0, "gaps_kept": 0, "text_differs": 0, "median_interval_ms": null, "suspected_gaps": []},
