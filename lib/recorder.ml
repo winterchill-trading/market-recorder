@@ -33,54 +33,130 @@ let status t =
   }
 ;;
 
+let stats (frames, parse_errors, reconnects) =
+  { Metrics.Feed_stats.frames; parse_errors; reconnects }
+;;
+
+(* A feed and a reader of its client's counters. Error frames the server sends count as
+   parse errors, as they do in the clients that do not count them apart. *)
 let open_feed (entry : Config.Venue_entry.t) ~symbol ~on_raw =
   let symbols = [ symbol ] in
   let streams = entry.streams in
   match entry.venue with
   | Hyperliquid ->
-    Hl_client.Live_feed.create
-      ~on_raw
-      (Config.Endpoint.hyperliquid entry.config)
-      ~symbols
-      ~streams
+    let%map feed, read =
+      Hl_client.Live_feed.create_with_stats
+        ~on_raw
+        (Config.Endpoint.hyperliquid entry.config)
+        ~symbols
+        ~streams
+    in
+    ( feed
+    , fun () ->
+        let { Hl_client.Live_feed.Stats.frames; parse_errors; error_frames; reconnects } =
+          read ()
+        in
+        stats (frames, parse_errors + error_frames, reconnects) )
   | Binance ->
-    Binance_client.Live_feed.create
-      ~on_raw
-      (Config.Endpoint.binance entry.config)
-      ~symbols
-      ~streams
+    let%map t =
+      Binance_client.Live_feed.start
+        ~on_raw
+        (Config.Endpoint.binance entry.config)
+        ~symbols
+        ~streams
+    in
+    ( Binance_client.Live_feed.feed t
+    , fun () ->
+        let { Binance_client.Live_feed.Stats.frames; parse_errors; reconnects } =
+          Binance_client.Live_feed.stats t
+        in
+        stats (frames, parse_errors, reconnects) )
   | Bybit ->
-    Bybit_client.Live_feed.create
-      ~on_raw
-      (Config.Endpoint.bybit entry.config)
-      ~symbols
-      ~streams
+    let%map t =
+      Bybit_client.Live_feed.connect
+        ~on_raw
+        (Bybit_client.Config.read_only (Config.Endpoint.bybit entry.config))
+        ~symbols
+        ~streams
+    in
+    ( Bybit_client.Live_feed.feed t
+    , fun () ->
+        List.fold
+          (Bybit_client.Live_feed.stats t)
+          ~init:Metrics.Feed_stats.zero
+          ~f:(fun sum (_, { frames; parse_errors; reconnects }) ->
+            Metrics.Feed_stats.( + ) sum (stats (frames, parse_errors, reconnects))) )
   | Okx ->
-    Okx_feed.Live_feed.create ~on_raw (Config.Endpoint.okx entry.config) ~symbols ~streams
+    let%map t =
+      Okx_feed.Live_feed.start
+        ~on_raw
+        (Config.Endpoint.okx entry.config)
+        ~symbols
+        ~streams
+    in
+    ( Okx_feed.Live_feed.feed t
+    , fun () ->
+        let { Okx_feed.Live_feed.Stats.frames; parse_errors; reconnects } =
+          Okx_feed.Live_feed.stats t
+        in
+        stats (frames, parse_errors, reconnects) )
   | Coinbase ->
-    Coinbase_feed.Live_feed.create
-      ~on_raw
-      (Config.Endpoint.coinbase entry.config)
-      ~symbols
-      ~streams
+    let%map t =
+      Coinbase_feed.Live_feed.start
+        ~on_raw
+        (Config.Endpoint.coinbase entry.config)
+        ~symbols
+        ~streams
+    in
+    ( Coinbase_feed.Live_feed.feed t
+    , fun () ->
+        let { Coinbase_feed.Live_feed.Stats.frames; parse_errors; reconnects } =
+          Coinbase_feed.Live_feed.stats t
+        in
+        stats (frames, parse_errors, reconnects) )
   | Kraken ->
-    Kraken_feed.Live_feed.create
-      ~on_raw
-      (Config.Endpoint.kraken entry.config)
-      ~symbols
-      ~streams
+    let%map t =
+      Kraken_feed.Live_feed.start
+        ~on_raw
+        (Config.Endpoint.kraken entry.config)
+        ~symbols
+        ~streams
+    in
+    ( Kraken_feed.Live_feed.feed t
+    , fun () ->
+        let { Kraken_feed.Live_feed.Stats.frames; parse_errors; reconnects } =
+          Kraken_feed.Live_feed.stats t
+        in
+        stats (frames, parse_errors, reconnects) )
   | Deribit ->
-    Deribit_feed.Live_feed.create
-      ~on_raw
-      (Config.Endpoint.deribit entry.config)
-      ~symbols
-      ~streams
+    let%map t =
+      Deribit_feed.Live_feed.start
+        ~on_raw
+        (Config.Endpoint.deribit entry.config)
+        ~symbols
+        ~streams
+    in
+    ( Deribit_feed.Live_feed.feed t
+    , fun () ->
+        let { Deribit_feed.Live_feed.Stats.frames; parse_errors; reconnects } =
+          Deribit_feed.Live_feed.stats t
+        in
+        stats (frames, parse_errors, reconnects) )
   | Bitget ->
-    Bitget_feed.Live_feed.create
-      ~on_raw
-      (Config.Endpoint.bitget entry.config)
-      ~symbols
-      ~streams
+    let%map feed, read =
+      Bitget_feed.Live_feed.create_with_stats
+        ~on_raw
+        (Config.Endpoint.bitget entry.config)
+        ~symbols
+        ~streams
+    in
+    ( feed
+    , fun () ->
+        let { Bitget_feed.Live_feed.Stats.frames; parse_errors; error_events; reconnects }
+          =
+          read ()
+        in
+        stats (frames, parse_errors + error_events, reconnects) )
   | (Nyse | Cboe | Cme) as venue ->
     (* rejected by [Config.of_sexp] *)
     raise_s [%message "no live feed" (venue : Market_data.Venue.t)]
@@ -142,7 +218,8 @@ let start (config : Config.t) =
           Metrics.frame metrics key ~recv_ts ~bytes:(String.length frame);
           Raw_writer.write raw ~venue:entry.venue ~stream ~symbol ~recv_ts frame
         in
-        let%map feed = open_feed entry ~symbol ~on_raw in
+        let%map feed, read_stats = open_feed entry ~symbol ~on_raw in
+        Metrics.add_feed_stats_source metrics ~venue:entry.venue read_stats;
         let (module F : Market_data.Feed.S) = feed in
         List.iter entry.streams ~f:(fun stream ->
           let length : Market_data.Stream.t -> unit -> int = function
