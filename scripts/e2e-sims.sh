@@ -100,12 +100,30 @@ while read -r line; do
   [[ -n $zst ]] || problem "no compressed minute under $raw"
   [[ -n $(find "$out/remote/$raw" -name '*.ndjson.zst' 2>/dev/null | head -1) ]] ||
     problem "nothing uploaded under $raw"
-  [[ -n $(find "$out/data/$venue/$symbol/norm/$stream" -name '*.bin' 2>/dev/null | head -1) ]] ||
-    problem "no event log under $venue/$symbol/norm/$stream"
   if [[ -n $zst ]]; then
     zstd -dc "$zst" >/dev/null || problem "corrupt $zst"
   fi
 done <<<"$streams"
+
+# every stream with normalized events, including those recorded under another stream
+# (Hyperliquid bbo comes from the l2 frames): an event log
+while read -r line; do
+  [[ -z $line ]] && continue
+  labels=${line#*\{}
+  labels=${labels%%\}*}
+  venue=$(sed -E 's/.*venue="([^"]*)".*/\1/' <<<"$labels")
+  stream=$(sed -E 's/.*stream="([^"]*)".*/\1/' <<<"$labels")
+  symbol=$(sed -E 's/.*symbol="([^"]*)".*/\1/' <<<"$labels")
+  [[ ${line##* } != 0 ]] || problem "no events: ${line% *}"
+  [[ -n $(find "$out/data/$venue/$symbol/norm/$stream" -name '*.bin' 2>/dev/null | head -1) ]] ||
+    problem "no event log under $venue/$symbol/norm/$stream"
+done <<<"$(grep '^market_recorder_events_total{' "$out/metrics.txt" || true)"
+
+# client counters: no parse errors
+while read -r line; do
+  [[ -z $line ]] && continue
+  [[ ${line##* } == 0 ]] || problem "parse errors: $line"
+done <<<"$(grep '^market_recorder_parse_errors_total{' "$out/metrics.txt" || true)"
 
 for f in $(find "$out/data/raw" -name '*.zst' | sort | head -3); do
   echo "== zstd -dc ${f#"$out"/data/} | head -2"
