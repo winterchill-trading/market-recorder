@@ -12,7 +12,7 @@ end
 
 let text = "text/plain; charset=utf-8"
 
-let respond ?max_age ?(process_metrics = Process_metrics.render) metrics ~path
+let respond ?max_age ?(process_metrics = Process_metrics.render) ?status metrics ~path
   : Response.t
   =
   match path with
@@ -47,19 +47,22 @@ let respond ?max_age ?(process_metrics = Process_metrics.render) metrics ~path
     ; content_type = "text/plain; version=0.0.4; charset=utf-8"
     ; body = Metrics.render metrics ^ process_metrics ()
     }
+  | "/status" when Option.is_some status ->
+    let status = Option.value_exn status in
+    { status = `OK; content_type = text; body = Sexp.to_string_hum (status ()) ^ "\n" }
   | _ -> { status = `Not_found; content_type = text; body = "not found\n" }
 ;;
 
 type t = (Socket.Address.Inet.t, int) Cohttp_async.Server.t
 
-let start ?process_metrics ~port metrics =
+let start ?process_metrics ?status ~port metrics =
   Cohttp_async.Server.create
     ~on_handler_error:`Ignore
     (Tcp.Where_to_listen.of_port port)
     (fun ~body:_ _ request ->
        let path = Uri.path (Cohttp.Request.uri request) in
        let { Response.status; content_type; body } =
-         respond ?process_metrics metrics ~path
+         respond ?process_metrics ?status metrics ~path
        in
        Cohttp_async.Server.respond_string
          ~status

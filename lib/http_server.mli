@@ -7,6 +7,9 @@
     - [GET /metrics]: {!Metrics.render} followed by [process_metrics ()] (default
       {!Process_metrics.render}), as [text/plain; version=0.0.4].
 
+    - [GET /status]: [status ()] as a sexp, when [status] is given (the recorder passes
+      {!Recorder.status}: open minute files, pending uploads and per-stream counters).
+
     Anything else is [404]. *)
 
 open! Core
@@ -25,6 +28,7 @@ end
 val respond
   :  ?max_age:Time_ns.Span.t
   -> ?process_metrics:(unit -> string)
+  -> ?status:(unit -> Sexp.t)
   -> Metrics.t
   -> path:string
   -> Response.t
@@ -32,7 +36,12 @@ val respond
 type t
 
 (** Listens on [port] (0 picks a free one). *)
-val start : ?process_metrics:(unit -> string) -> port:int -> Metrics.t -> t Deferred.t
+val start
+  :  ?process_metrics:(unit -> string)
+  -> ?status:(unit -> Sexp.t)
+  -> port:int
+  -> Metrics.t
+  -> t Deferred.t
 
 val port : t -> int
 val close : t -> unit Deferred.t

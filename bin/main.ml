@@ -22,7 +22,10 @@ let run =
        let config = load_config config in
        let%bind recorder = Recorder.start config in
        let%bind server =
-         Http_server.start ~port:config.http_port (Recorder.metrics recorder)
+         Http_server.start
+           ~port:config.http_port
+           ~status:(fun () -> [%sexp (Recorder.status recorder : Recorder.Status.t)])
+           (Recorder.metrics recorder)
        in
        Log.Global.info_s
          [%message
