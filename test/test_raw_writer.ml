@@ -185,3 +185,41 @@ let%expect_test "a file that cannot be opened is reported, not raised" =
   [%expect {| (1 (2026-10-12T09:15:30.000000Z)) |}];
   return ()
 ;;
+
+let%expect_test "100 minute rolls keep the descriptor count flat" =
+  let dir = temp_dir () in
+  let now = ref (time "2026-10-12T09:00:30Z") in
+  let closed = ref 0 in
+  let t =
+    Raw_writer.create
+      ~flush_interval:(Time_ns.Span.of_day 1.)
+      ~now:(fun () -> !now)
+      ~data_dir:dir
+      ~on_closed:(fun _ -> incr closed)
+      ()
+  in
+  let minute i =
+    now := Time_ns.add (time "2026-10-12T09:00:30Z") (Time_ns.Span.of_int_sec (60 * i));
+    List.iter [ "BTCUSDT"; "ETHUSDT"; "SOLUSDT" ] ~f:(fun symbol ->
+      Raw_writer.write t ~venue:Binance ~stream:Trades ~symbol ~recv_ts:!now "{}");
+    let%bind () = Raw_writer.flush t in
+    now := Time_ns.add !now (Time_ns.Span.of_int_sec 60);
+    Raw_writer.roll t
+  in
+  (* warm up Async's thread pool and caches before counting *)
+  let%bind () = Deferred.List.iter ~how:`Sequential (List.init 3 ~f:Fn.id) ~f:minute in
+  let before = Process_metrics.open_fds () in
+  let%bind () =
+    Deferred.List.iter ~how:`Sequential (List.init 100 ~f:(fun i -> i + 3)) ~f:minute
+  in
+  let after = Process_metrics.open_fds () in
+  let%bind () = Raw_writer.close t in
+  print_s
+    [%message
+      ""
+        ~closed:(!closed : int)
+        ~open_files:(List.length (Raw_writer.open_files t) : int)
+        ~fds_flat:([%equal: int option] before after : bool)];
+  [%expect {| ((closed 309) (open_files 0) (fds_flat true)) |}];
+  return ()
+;;
