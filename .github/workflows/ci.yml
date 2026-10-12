@@ -35,6 +35,68 @@ jobs:
       - run: opam exec -- dune build
       - run: opam exec -- dune test
       - run: MARKET_RECORDER=_build/default/bin/main.exe scripts/test-replicate-day.sh
+  e2e-sims:
+    # A dune workspace holding market-recorder and the three simulators; every other
+    # sibling comes from the pinned opam switch.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ws/market-recorder
+      - uses: actions/checkout@v4
+        with:
+          repository: winterchill-trading/hl-sim
+          path: ws/hl-sim
+      - uses: actions/checkout@v4
+        with:
+          repository: winterchill-trading/binance-sim
+          path: ws/binance-sim
+      - uses: actions/checkout@v4
+        with:
+          repository: winterchill-trading/bybit-sim
+          path: ws/bybit-sim
+      - name: Workspace root and the opam files whose dependencies to install
+        run: |
+          echo '(lang dune 3.17)' > ws/dune-workspace
+          mkdir -p e2e-deps
+          cp ws/market-recorder/*.opam ws/hl-sim/*.opam ws/binance-sim/*.opam ws/bybit-sim/*.opam e2e-deps/
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsecp256k1-dev zstd
+      - uses: winterchill-trading/infra/.github/actions/ox-setup@main
+        with:
+          working-directory: e2e-deps
+          pins: |
+            fixed-decimal https://github.com/winterchill-trading/fixed-decimal.git
+            exchange-core https://github.com/winterchill-trading/exchange-core.git
+            hl-protocol https://github.com/winterchill-trading/hl-protocol.git
+            parquet https://github.com/winterchill-trading/parquet.git
+            market-data https://github.com/winterchill-trading/market-data.git
+            venue-net https://github.com/winterchill-trading/venue-net.git
+            hl-client https://github.com/winterchill-trading/hl-client.git
+            binance-protocol https://github.com/winterchill-trading/binance-protocol.git
+            mm-core https://github.com/winterchill-trading/mm-core.git
+            binance-client https://github.com/winterchill-trading/binance-client.git
+            bybit-protocol https://github.com/winterchill-trading/bybit-protocol.git
+            bybit-client https://github.com/winterchill-trading/bybit-client.git
+            order-book https://github.com/winterchill-trading/order-book.git
+            exchange-core-engine https://github.com/winterchill-trading/exchange-core.git
+            price-anchor https://github.com/winterchill-trading/price-anchor.git
+            okx-feed https://github.com/winterchill-trading/okx-feed.git
+            coinbase-feed https://github.com/winterchill-trading/coinbase-feed.git
+            kraken-feed https://github.com/winterchill-trading/kraken-feed.git
+            deribit-feed https://github.com/winterchill-trading/deribit-feed.git
+            bitget-feed https://github.com/winterchill-trading/bitget-feed.git
+      - name: e2e-sims.sh 20
+        env:
+          WORKSPACE: ${{ github.workspace }}/ws
+          OPAM_SWITCH: ${{ github.workspace }}
+        run: ws/market-recorder/scripts/e2e-sims.sh 20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-sims-${{ github.run_id }}
+          path: /tmp/market-recorder-sims/logs
+          retention-days: 14
   alert-rules:
     runs-on: ubuntu-latest
     steps:
