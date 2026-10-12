@@ -9,7 +9,7 @@ let%expect_test "healthz and metrics over http" =
   let key : Metrics.Key.t = { venue = Bybit; stream = Bbo; symbol = "BTCUSDT" } in
   Metrics.register metrics key;
   Metrics.frame metrics key ~recv_ts:!now ~bytes:10;
-  let%bind server = Http_server.start ~port:0 metrics in
+  let%bind server = Http_server.start ~process_metrics:(fun () -> "") ~port:0 metrics in
   let get path =
     let uri =
       Uri.make ~scheme:"http" ~host:"127.0.0.1" ~port:(Http_server.port server) ~path ()

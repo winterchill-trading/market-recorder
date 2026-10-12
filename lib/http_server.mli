@@ -4,7 +4,8 @@
       30s and the raw writer has not failed in that time, else [503] with the stale
       streams as a sexp. The last raw writer failure and its age follow on their own line
       whenever there was one.
-    - [GET /metrics]: {!Metrics.render}, as [text/plain; version=0.0.4].
+    - [GET /metrics]: {!Metrics.render} followed by [process_metrics ()] (default
+      {!Process_metrics.render}), as [text/plain; version=0.0.4].
 
     Anything else is [404]. *)
 
@@ -21,12 +22,17 @@ module Response : sig
 end
 
 (** The response for a request path. *)
-val respond : ?max_age:Time_ns.Span.t -> Metrics.t -> path:string -> Response.t
+val respond
+  :  ?max_age:Time_ns.Span.t
+  -> ?process_metrics:(unit -> string)
+  -> Metrics.t
+  -> path:string
+  -> Response.t
 
 type t
 
 (** Listens on [port] (0 picks a free one). *)
-val start : port:int -> Metrics.t -> t Deferred.t
+val start : ?process_metrics:(unit -> string) -> port:int -> Metrics.t -> t Deferred.t
 
 val port : t -> int
 val close : t -> unit Deferred.t

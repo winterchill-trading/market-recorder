@@ -12,7 +12,9 @@ end
 
 let text = "text/plain; charset=utf-8"
 
-let respond ?max_age metrics ~path : Response.t =
+let respond ?max_age ?(process_metrics = Process_metrics.render) metrics ~path
+  : Response.t
+  =
   match path with
   | "/healthz" ->
     let health = Metrics.health ?max_age metrics in
@@ -43,20 +45,22 @@ let respond ?max_age metrics ~path : Response.t =
   | "/metrics" ->
     { status = `OK
     ; content_type = "text/plain; version=0.0.4; charset=utf-8"
-    ; body = Metrics.render metrics
+    ; body = Metrics.render metrics ^ process_metrics ()
     }
   | _ -> { status = `Not_found; content_type = text; body = "not found\n" }
 ;;
 
 type t = (Socket.Address.Inet.t, int) Cohttp_async.Server.t
 
-let start ~port metrics =
+let start ?process_metrics ~port metrics =
   Cohttp_async.Server.create
     ~on_handler_error:`Ignore
     (Tcp.Where_to_listen.of_port port)
     (fun ~body:_ _ request ->
        let path = Uri.path (Cohttp.Request.uri request) in
-       let { Response.status; content_type; body } = respond metrics ~path in
+       let { Response.status; content_type; body } =
+         respond ?process_metrics metrics ~path
+       in
        Cohttp_async.Server.respond_string
          ~status
          ~headers:(Cohttp.Header.of_list [ "content-type", content_type ])
