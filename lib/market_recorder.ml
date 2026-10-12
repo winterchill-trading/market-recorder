@@ -14,3 +14,4 @@ module Venue_seq = Venue_seq
 module Seq_gaps = Seq_gaps
 module Silence = Silence
 module Raw_files = Raw_files
+module Clock_error = Clock_error

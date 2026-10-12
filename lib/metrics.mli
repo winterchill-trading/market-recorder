@@ -48,6 +48,16 @@ val exchange_lag : t -> venue:Market_data.Venue.t -> Time_ns.Span.t -> unit
 
 val exchange_lags : t -> (Market_data.Venue.t * Time_ns.Span.t) list
 
+(** A process-wide gauge or counter without labels, read when rendering and left out while
+    [f] returns [None]. [type_] is ["gauge"] or ["counter"]. *)
+val add_scalar
+  :  t
+  -> name:string
+  -> type_:string
+  -> help:string
+  -> (unit -> float option)
+  -> unit
+
 (** Uploader gauges, read when rendering. *)
 val set_upload_source : t -> (unit -> int * int * int) -> unit
 

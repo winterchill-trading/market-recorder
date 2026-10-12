@@ -49,11 +49,14 @@ type t =
   ; mutable feed_stats_sources : (Market_data.Venue.t * (unit -> Feed_stats.t)) list
   ; mutable flush_error_source : unit -> (Error.t * Time_ns.t) option
   ; mutable lags : (Market_data.Venue.t * Time_ns.Span.t) list (** sorted by venue *)
+  ; mutable scalars : (string * string * string * (unit -> float option)) list
+  (** name, type, help, value; in the order added *)
   }
 
 let create ?(now = Time_ns.now) () =
   { now
   ; lags = []
+  ; scalars = []
   ; counters = Hashtbl.create (module Key)
   ; upload_source = None
   ; feed_stats_sources = []
@@ -109,6 +112,7 @@ let exchange_lag t ~venue lag =
 ;;
 
 let exchange_lags t = t.lags
+let add_scalar t ~name ~type_ ~help f = t.scalars <- t.scalars @ [ name, type_, help, f ]
 let set_flush_error_source t f = t.flush_error_source <- f
 
 let add_feed_stats_source t ~venue f =
@@ -309,6 +313,17 @@ let render t =
         name
         (Market_data.Venue.to_string venue)
         (Time_ns.Span.to_sec lag)));
+  List.iter t.scalars ~f:(fun (name, type_, help, f) ->
+    Option.iter (f ()) ~f:(fun v ->
+      bprintf
+        buf
+        "# HELP %s %s\n# TYPE %s %s\n%s %s\n"
+        name
+        help
+        name
+        type_
+        name
+        (Float.to_string_hum ~decimals:9 ~strip_zero:true v)));
   Option.iter t.upload_source ~f:(fun f ->
     let uploaded, failures, pending = f () in
     let scalar name ~type_ ~help v =

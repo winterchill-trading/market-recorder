@@ -29,3 +29,6 @@ module Silence = Silence
 
 (** Raw minute files with an optional collector id in the name. *)
 module Raw_files = Raw_files
+
+(** The host clock error bound from chrony. *)
+module Clock_error = Clock_error

@@ -28,6 +28,8 @@ let run =
        Log.Global.set_output [ Log.Output.stderr () ];
        let config = load_config config in
        let%bind recorder = Recorder.start ?collector config in
+       let clock_error = Clock_error.start () in
+       Clock_error.register clock_error (Recorder.metrics recorder);
        let%bind server =
          Http_server.start
            ~port:config.http_port
@@ -46,6 +48,7 @@ let run =
            Log.Global.info_s [%message "stopping" (signal : Signal.t)];
            Ivar.fill_if_empty stopped ()));
        let%bind () = Ivar.read stopped in
+       Clock_error.stop clock_error;
        let%bind () = Recorder.stop recorder in
        let%bind () = Http_server.close server in
        Log.Global.info "stopped";
