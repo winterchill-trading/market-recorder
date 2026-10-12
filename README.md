@@ -10,12 +10,17 @@ when the minute is over. Next to the raw files the normalized events are appende
 daily `Market_data.Event_log` files that the `market-data` tools read.
 
 ```
-market-recorder run -config recorder.sexp
+market-recorder run -config recorder.sexp [-collector ID]
 market-recorder check-config -config recorder.sexp
 market-recorder status -url http://localhost:9100     # /metrics of a running recorder as tables
 market-recorder rebuild-norm -data-dir DIR -out DIR -date YYYY-MM-DD   # norm/ from raw/
 market-recorder merge -a DIR_A -b DIR_B -out DIR -date YYYY-MM-DD      # two collectors into one raw/
 ```
+
+`-collector ID` (1 to 32 of `A-Za-z0-9_`) adds the id to every raw minute file name,
+`<HH>-<MM>.<ID>.ndjson[.zst]`, so two collectors of one venue never write the same
+object; `merge -collector-a/-collector-b` and `rebuild-norm -collector` read such files.
+At startup the recorder logs its `RLIMIT_NOFILE` (soft and hard).
 
 `SIGTERM` or `SIGINT` flushes everything, closes the feeds, writes a disconnect line to
 every stream that received data, compresses the open minutes, gives pending uploads up to
@@ -169,17 +174,23 @@ gc_top_heap_words                           410953
 | `market_recorder_bytes_total` | venue, stream, symbol | raw frame bytes |
 | `market_recorder_events_total` | venue, stream, symbol | normalized events |
 | `market_recorder_clamped_frames_total` | venue, stream, symbol | frames whose receive time was raised to the previous one |
+| `market_recorder_gaps_total` | venue, stream, symbol | gaps the venue client reported (reconnects, book resyncs) |
 | `market_recorder_norm_pipe_length` | venue, stream, symbol | normalized events waiting for the event log writer |
 | `market_recorder_healthz_flaps_total` | venue, stream, symbol | times the stream went stale after being fresh (seen by `/healthz` or `/metrics` requests) |
 | `market_recorder_last_frame_age_seconds` | venue, stream, symbol | since the last frame (since start if none) |
 | `market_recorder_client_frames_total` | venue | websocket text frames the venue clients received, acks and heartbeats included, summed over the venue's feeds |
 | `market_recorder_parse_errors_total` | venue | frames the clients dropped as undecodable, plus error responses from the server |
 | `market_recorder_reconnects_total` | venue | successful reconnections (the first connection excluded) |
+| `market_recorder_exchange_lag_seconds` | venue | `recv_ts - exch_ts` of the venue's latest trade, BBO or L2 event (funding left out) |
+| `market_recorder_clock_error_seconds` | | clock error bound from `chronyc -c tracking`, every 30 s: \|offset\| + root delay / 2 + root dispersion; absent without chrony |
+| `market_recorder_long_cycles_total` | | Async cycles over 50 ms (each cycle over 20 ms is logged, at most once per 10 s with a suppressed count) |
+| `market_recorder_longest_cycle_seconds` | | longest Async cycle over 20 ms since start |
 | `market_recorder_uploads_total` | | files uploaded |
 | `market_recorder_upload_failures_total` | | failed command runs |
 | `market_recorder_upload_pending` | | files waiting |
 | `market_recorder_build_info` | version, ocaml | always 1; `version` is `git describe` at build time (`unknown` outside a checkout) |
 | `market_recorder_open_fds` | | open file descriptors (`/proc/self/fd` or `/dev/fd`) |
+| `market_recorder_max_fds` | | soft `RLIMIT_NOFILE` |
 | `market_recorder_resident_memory_bytes` | | resident set size (Linux only) |
 | `market_recorder_gc_minor_collections_total`, `_gc_major_collections_total`, `_gc_compactions_total` | | GC counters |
 | `market_recorder_gc_heap_words`, `_gc_top_heap_words` | | major heap size, current and peak |
@@ -189,8 +200,18 @@ families come from each client's own `stats` (one reader per feed, summed per ve
 The status endpoint carries the same client counters under `clients`. Hyperliquid
 `l2Book` frames feed both `l2` and `bbo` but are written once, under `l2` when it is
 recorded; `bbo` then only has the event columns (`-` in `market-recorder status`) and is
-left out of the health rule. Reconnects are counted but do not produce disconnect lines;
-only shutdown does.
+left out of the health rule.
+
+Hyperliquid, Binance and Bybit report every reconnect (and Bybit every book resync) as
+a `Market_data.Gap.t` on their `feed_with_gaps`; the recorder counts it per stream and
+writes a disconnect line into each affected stream's open raw minute file, so a mid-run
+reconnect shows in the raw files the way a shutdown does. OKX, Coinbase, Kraken, Deribit
+and Bitget report no gaps yet: their reconnects are counted in `reconnects_total` only.
+
+A stalled event log (a disk that stops taking writes) does not push back on the feeds:
+`Norm_writer` drains the feed pipes and the events wait in the writer's memory, so
+`norm_pipe_length` stays at zero while the files stop growing
+(`test_norm_writer.ml` shows 10000 events buffered, nothing flushed).
 
 [`deploy/prometheus/alerts.yml`](deploy/prometheus/alerts.yml) is an example rule file:
 `MarketRecorderParseErrors` fires when a venue's parse error rate stays above zero for
@@ -205,7 +226,7 @@ at any time, for example after a normalizer fix:
 
 ```
 market-recorder rebuild-norm -data-dir DIR -out NEW_DIR -date 2026-10-12 \
-  [-venue binance ...] [-skip venue:stream ...]
+  [-venue binance ...] [-skip venue:stream ...] [-collector ID]
 scripts/rebuild-day.sh DIR [2026-10-12] [flags...]   # default: yesterday, into DIR/rebuilt/DATE
 ```
 
@@ -222,6 +243,9 @@ appended to).
   data known not to rebuild. The rebuild then reads a temporary directory of symlinks to
   the other `raw/<venue>/<stream>` directories, removed afterwards. Hyperliquid's `bbo`
   events come from the `l2` frames, so `-skip hyperliquid:l2` drops both.
+- `-collector ID` reads that collector's files (`<HH>-<MM>.<ID>.ndjson.zst`) through a
+  temporary directory of per-file symlinks under their plain names; without it, files
+  with a collector id are ignored.
 - The L2 snapshot index (`norm/l2/_snapshots/`) is not written: `Rebuild_norm` takes no
   snapshot interval.
 
@@ -241,18 +265,27 @@ canonical copy in the same layout, so every reader (rebuild-norm, day close, rep
 works on it unchanged:
 
 ```
-market-recorder merge -a A_DATA_DIR -b B_DATA_DIR -out NEW_DIR -date 2026-10-12 [-window 5s]
+market-recorder merge -a A_DATA_DIR -b B_DATA_DIR -out NEW_DIR -date 2026-10-12 \
+  [-window 5s] [-clock-error 2ms] [-silence 10s] [-collector-a ID] [-collector-b ID]
 scripts/replicate-day.sh REMOTE_A REMOTE_B [2026-10-12] [merge flags...]
 ```
 
 Per venue, stream, symbol and minute (`Raw_merge.merge_minute`):
 
-- Frames are matched by their text. A frame of copy A and one of copy B with the same
-  text and `recv_ts` at most `-window` apart (default 5 s) are one venue message, written
-  once with the earlier `recv_ts`. Repeated identical frames pair up in time order.
-  Unmatched frames in the last window of a minute are also matched against the next
-  minute of the other copy, so a message stamped 13:35:59.999 on one side and
-  13:36:00.001 on the other is kept once.
+- Frames are matched by their identity: the venue sequence number where the stream has
+  one (`Venue_seq`: Binance `depthUpdate` `u`, Binance `aggTrade` `a`, Bybit book
+  message type and `u`), else the frame text. A frame of copy A and one of copy B with
+  the same identity and `recv_ts` at most `-window` apart (default 5 s) are one venue
+  message, written once with the earlier `recv_ts`; pairs whose texts differ are counted
+  (`text_differs`). Repeated identical frames pair up in time order. Unmatched frames
+  in the last window of a minute are also matched against the next minute of the other
+  copy, so a message stamped 13:35:59.999 on one side and 13:36:00.001 on the other is
+  kept once; the day's first minute is matched against the previous day's 23:59 files
+  the same way (`previous_day` counts the frames dropped for it).
+- `-clock-error SPAN` is the two collectors' summed clock error bound (for example the
+  sum of both `market_recorder_clock_error_seconds`): it widens the window, and when two
+  copies' stamps are closer than it, copy A's is kept, since the clocks cannot say which
+  came first.
 - A disconnect line covers the span from the previous frame of its file (or the start of
   the minute) to the next frame (or the end of the minute). It is written only when the
   other copy also has a gap overlapping that span (its own disconnect, or no file for the
@@ -263,13 +296,31 @@ Per venue, stream, symbol and minute (`Raw_merge.merge_minute`):
 
 `<out>/_merge/<date>.json` reports per series and in total: `minutes` written, `only_a`
 and `only_b` (frames one copy missed), `both`, `gaps_closed` (disconnect lines the peer
-filled) and `gaps_kept` (gaps both copies had). The command prints the totals.
+filled), `gaps_kept` (gaps both copies had), `text_differs` and `previous_day`. The
+command prints the totals. Each series also reports:
 
-Not yet implemented from [the replication design][replication]: venue sequence numbers
-(Binance `u`/`pu`, Bybit `u`) as the identity and for exact gap lists, silence-based
-suspected gaps, the clock-error bound (frames closer than both clocks' error are
-ordered by `recv_ts` like any other), the L2 snapshot rule after a fill, and matching
-across the day boundary.
+- `median_interval_ms` and `suspected_gaps`: stretches longer than `-silence` (default
+  10 s) without a merged frame, including from midnight to the first frame and from the
+  last frame to the end of the day, on streams that normally tick (median interval at
+  most a tenth of `-silence`, from a power-of-two histogram, so a quiet trade stream
+  reports none).
+- For streams with a venue sequence: `seq_gaps`, the exact ranges of sequence numbers
+  missing from the merged output (`first_missing`, `last_missing`, `at` = the
+  `recv_ts` of the message after the gap), and `seq_gaps_a` / `seq_gaps_b`, the number
+  of gaps each copy had on its own (filled where the other copy had the messages).
+  Binance depth gaps are `pu` not equal to the previous `u`; aggregate trades and Bybit
+  book deltas must continue by one; a Bybit snapshot with `u = 1` restarts the sequence.
+  Checks pass through a reorder buffer of `-window` plus `-clock-error`, since the two
+  copies interleave slightly out of order.
+
+`-collector-a ID` / `-collector-b ID` read only that collector's files
+(`<HH>-<MM>.<ID>.ndjson.zst`); `-a` and `-b` may then be the same tree, as after
+cross-region replication into one bucket. Without them, only files without an id are
+read. The merged output always uses plain names.
+
+Not yet implemented from [the replication design][replication]: ordering frames inside
+the clock bound by venue sequence (they keep `recv_ts` order), and the L2 snapshot rule
+after a fill.
 
 `scripts/replicate-day.sh` fetches one day of both collectors' `raw/` trees with
 `rclone copy --include '/raw/*/*/*/YYYY/MM/DD/**'` into `$WORK/a` and `$WORK/b` (default
@@ -313,7 +364,10 @@ few, then kills the simulators. It exits 1, listing every `PROBLEM`, when `/heal
 not 200 or reports a raw writer failure, a stream received no frame, an upload failed or
 is still pending, a venue client counted parse errors, the recorder exits non-zero, or a
 stream lacks a compressed minute, its uploaded copy or its event log. Run it from this repo inside the multi-repo dune
-workspace, or point `WORKSPACE` at another workspace root holding the simulators:
+workspace, or point `WORKSPACE` at another workspace root holding the simulators
+(`OPAM_SWITCH` names the switch, `5.2.0+ox` by default). CI runs it for 20 s in the
+`e2e-sims` job, in a workspace of this repository and the three simulators checked out
+from `main`, and keeps the logs as an artifact:
 
 ```
 DUNE_BUILD_DIR=../_build-market-recorder scripts/e2e-sims.sh 75
@@ -491,3 +545,9 @@ At about 0.36 to 0.42 M input lines/s, a day of the busiest stream (two copies a
 | `Status_table` | Prometheus text parser and the tables of `status` |
 | `Rebuild` | `rebuild-norm` over every venue's normalizer, venue filter and skip list |
 | `Raw_merge` | `merge`: two collectors' raw minute files into one canonical copy with a report |
+| `Raw_files` | collector ids in raw minute file names; listing one collector's files |
+| `Venue_seq` | venue sequence numbers (identity and contiguity checks) read from raw frames |
+| `Seq_gaps` | exact sequence gaps with a reorder buffer |
+| `Silence` | suspected gaps from silence on streams that normally tick |
+| `Clock_error` | clock error bound sampled from `chronyc -c tracking` |
+| `Cycle_monitor` | long Async cycles counted and warned about |
