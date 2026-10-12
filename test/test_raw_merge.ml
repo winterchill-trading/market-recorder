@@ -18,9 +18,10 @@ let print_lines l =
       printf "%s %s\n" (Raw_writer.format_ts recv_ts) payload)
 ;;
 
-let merge ?(carry = Raw_merge.Carry.empty) ?(minute = minute) a b =
+let merge ?identity ?(carry = Raw_merge.Carry.empty) ?(minute = minute) a b =
   let lines, counts, carry =
     Raw_merge.merge_minute
+      ?identity
       ~window
       ~minute
       carry
@@ -44,7 +45,8 @@ let%expect_test "earliest copy of each frame wins" =
     2026-10-12T13:35:02.000000Z x2
     2026-10-12T13:35:03.000000Z x3
     2026-10-12T13:35:04.000000Z x4
-    ((minutes 1) (only_a 1) (only_b 1) (both 2) (gaps_closed 0) (gaps_kept 0))
+    ((minutes 1) (only_a 1) (only_b 1) (both 2) (gaps_closed 0) (gaps_kept 0)
+     (text_differs 0))
     |}];
   return ()
 ;;
@@ -63,7 +65,8 @@ let%expect_test "repeated frames pair up in time order, outside the window stay 
     2026-10-12T13:35:02.000000Z same
     2026-10-12T13:35:30.000000Z same
     2026-10-12T13:35:40.000000Z same
-    ((minutes 1) (only_a 1) (only_b 1) (both 2) (gaps_closed 0) (gaps_kept 0))
+    ((minutes 1) (only_a 1) (only_b 1) (both 2) (gaps_closed 0) (gaps_kept 0)
+     (text_differs 0))
     |}];
   return ()
 ;;
@@ -79,7 +82,8 @@ let%expect_test "a disconnect the other copy covered is dropped" =
     2026-10-12T13:35:01.000000Z x1
     2026-10-12T13:35:05.000000Z x5
     2026-10-12T13:35:09.000000Z x9
-    ((minutes 1) (only_a 0) (only_b 1) (both 2) (gaps_closed 1) (gaps_kept 0))
+    ((minutes 1) (only_a 0) (only_b 1) (both 2) (gaps_closed 1) (gaps_kept 0)
+     (text_differs 0))
     |}];
   return ()
 ;;
@@ -98,7 +102,8 @@ let%expect_test "overlapping disconnects stay as one gap" =
     2026-10-12T13:35:03.000000Z x3
     2026-10-12T13:35:09.000000Z x9
     2026-10-12T13:35:20.000000Z x20
-    ((minutes 1) (only_a 1) (only_b 2) (both 1) (gaps_closed 1) (gaps_kept 1))
+    ((minutes 1) (only_a 1) (only_b 2) (both 1) (gaps_closed 1) (gaps_kept 1)
+     (text_differs 0))
     |}];
   return ()
 ;;
@@ -112,14 +117,16 @@ let%expect_test "a missing file is a gap over the whole minute" =
     2026-10-12T13:35:01.000000Z x1
     <disconnect>
     2026-10-12T13:35:09.000000Z x9
-    ((minutes 1) (only_a 2) (only_b 0) (both 0) (gaps_closed 0) (gaps_kept 1))
+    ((minutes 1) (only_a 2) (only_b 0) (both 0) (gaps_closed 0) (gaps_kept 1)
+     (text_differs 0))
     |}];
   let (_ : Raw_merge.Carry.t) = merge None (Some [ ""; frame "09.000000" "x9" ]) in
   [%expect
     {|
     <disconnect>
     2026-10-12T13:35:09.000000Z x9
-    ((minutes 1) (only_a 0) (only_b 1) (both 0) (gaps_closed 0) (gaps_kept 1))
+    ((minutes 1) (only_a 0) (only_b 1) (both 0) (gaps_closed 0) (gaps_kept 1)
+     (text_differs 0))
     |}];
   return ()
 ;;
@@ -132,7 +139,8 @@ let%expect_test "a frame stamped on both sides of a minute boundary is kept once
     {|
     2026-10-12T13:35:30.000000Z early
     2026-10-12T13:35:59.999000Z edge
-    ((minutes 1) (only_a 1) (only_b 1) (both 0) (gaps_closed 0) (gaps_kept 0))
+    ((minutes 1) (only_a 1) (only_b 1) (both 0) (gaps_closed 0) (gaps_kept 0)
+     (text_differs 0))
     |}];
   let (_ : Raw_merge.Carry.t) =
     merge
@@ -144,7 +152,38 @@ let%expect_test "a frame stamped on both sides of a minute boundary is kept once
   [%expect
     {|
     2026-10-12T13:36:01.000000Z next
-    ((minutes 1) (only_a -1) (only_b 0) (both 2) (gaps_closed 0) (gaps_kept 0))
+    ((minutes 1) (only_a -1) (only_b 0) (both 2) (gaps_closed 0) (gaps_kept 0)
+     (text_differs 0))
+    |}];
+  return ()
+;;
+
+let%expect_test "frames with the same venue sequence are one message" =
+  let depth ~e ~u =
+    sprintf
+      {|{"stream":"btcusdt@depth@100ms","data":{"e":"depthUpdate","E":%d,"T":1,"s":"BTCUSDT","U":%d,"u":%d,"pu":%d,"b":[],"a":[]}}|}
+      e
+      u
+      u
+      (u - 1)
+  in
+  let identity payload =
+    (Venue_seq.of_frame ~venue:Binance ~stream:L2 payload).identity
+  in
+  (* the same update with a different event time on the two connections *)
+  let (_ : Raw_merge.Carry.t) =
+    merge
+      ~identity
+      (Some [ frame "01.000000" (depth ~e:1 ~u:7); frame "02.000000" (depth ~e:2 ~u:8) ])
+      (Some [ frame "01.000100" (depth ~e:9 ~u:7); frame "03.000000" (depth ~e:3 ~u:9) ])
+  in
+  [%expect
+    {|
+    2026-10-12T13:35:01.000000Z {"stream":"btcusdt@depth@100ms","data":{"e":"depthUpdate","E":1,"T":1,"s":"BTCUSDT","U":7,"u":7,"pu":6,"b":[],"a":[]}}
+    2026-10-12T13:35:02.000000Z {"stream":"btcusdt@depth@100ms","data":{"e":"depthUpdate","E":2,"T":1,"s":"BTCUSDT","U":8,"u":8,"pu":7,"b":[],"a":[]}}
+    2026-10-12T13:35:03.000000Z {"stream":"btcusdt@depth@100ms","data":{"e":"depthUpdate","E":3,"T":1,"s":"BTCUSDT","U":9,"u":9,"pu":8,"b":[],"a":[]}}
+    ((minutes 1) (only_a 1) (only_b 1) (both 1) (gaps_closed 0) (gaps_kept 0)
+     (text_differs 1))
     |}];
   return ()
 ;;
@@ -233,9 +272,11 @@ let%expect_test "merge a day of two collectors" =
     {|
     (Ok
      ((((venue Hyperliquid) (stream L2) (symbol_dir BTC))
-       ((minutes 1) (only_a 0) (only_b 0) (both 1) (gaps_closed 0) (gaps_kept 0)))
+       ((minutes 1) (only_a 0) (only_b 0) (both 1) (gaps_closed 0) (gaps_kept 0)
+        (text_differs 0)))
       (((venue Binance) (stream Trades) (symbol_dir BTCUSDT))
-       ((minutes 2) (only_a 0) (only_b 3) (both 2) (gaps_closed 1) (gaps_kept 0)))))
+       ((minutes 2) (only_a 0) (only_b 3) (both 2) (gaps_closed 1) (gaps_kept 0)
+        (text_differs 0)))))
     |}];
   let%bind () = Helpers.print_tree out_dir in
   [%expect
@@ -263,10 +304,10 @@ let%expect_test "merge a day of two collectors" =
     {
       "date": "2026-10-12",
       "window_ms": 5000,
-      "total": {"minutes": 3, "only_a": 0, "only_b": 3, "both": 3, "gaps_closed": 1, "gaps_kept": 0},
+      "total": {"minutes": 3, "only_a": 0, "only_b": 3, "both": 3, "gaps_closed": 1, "gaps_kept": 0, "text_differs": 0},
       "series": [
-        {"venue": "hyperliquid", "stream": "l2", "symbol": "BTC", "minutes": 1, "only_a": 0, "only_b": 0, "both": 1, "gaps_closed": 0, "gaps_kept": 0},
-        {"venue": "binance", "stream": "trades", "symbol": "BTCUSDT", "minutes": 2, "only_a": 0, "only_b": 3, "both": 2, "gaps_closed": 1, "gaps_kept": 0}
+        {"venue": "hyperliquid", "stream": "l2", "symbol": "BTC", "minutes": 1, "only_a": 0, "only_b": 0, "both": 1, "gaps_closed": 0, "gaps_kept": 0, "text_differs": 0},
+        {"venue": "binance", "stream": "trades", "symbol": "BTCUSDT", "minutes": 2, "only_a": 0, "only_b": 3, "both": 2, "gaps_closed": 1, "gaps_kept": 0, "text_differs": 0}
       ]
     }
     |}];
