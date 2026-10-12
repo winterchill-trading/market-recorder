@@ -1,0 +1,15 @@
+(library
+ (name market_recorder)
+ (public_name market-recorder)
+ (libraries
+  core
+  core_unix
+  async
+  uri
+  zstd
+  market-data
+  hl-client
+  binance-client
+  bybit-client)
+ (preprocess
+  (pps ppx_jane)))
