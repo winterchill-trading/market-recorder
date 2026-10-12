@@ -62,6 +62,67 @@ let timed f =
   x, Time_ns.diff (Time_ns.now ()) start
 ;;
 
+(* Two collectors' copies of the minute: B 300 us later, each missing a different 1%. *)
+let merge ~frames ~bytes =
+  let copy ~drop ~shift =
+    List.filter_mapi frames ~f:(fun i (recv_ts, frame) ->
+      Option.some_if
+        (i % 100 <> drop)
+        (Market_data.Raw_minute.Line.Frame
+           { recv_ts = Time_ns.add recv_ts (Time_ns.Span.of_int_us shift)
+           ; payload = frame
+           }))
+  in
+  let a = copy ~drop:0 ~shift:0
+  and b = copy ~drop:50 ~shift:300 in
+  let count = List.length a + List.length b in
+  let bytes = 2 * bytes in
+  let (_ : _ list), counts, (_ : Raw_merge.Carry.t) =
+    Raw_merge.merge_minute
+      ~window:Raw_merge.default_window
+      ~minute
+      Raw_merge.Carry.empty
+      ~a:(Some a)
+      ~b:(Some b)
+  in
+  let start = Time_ns.now () in
+  let (_ : _ list), (_ : Raw_merge.Counts.t), (_ : Raw_merge.Carry.t) =
+    Raw_merge.merge_minute
+      ~window:Raw_merge.default_window
+      ~minute
+      Raw_merge.Carry.empty
+      ~a:(Some a)
+      ~b:(Some b)
+  in
+  let in_memory = Time_ns.diff (Time_ns.now ()) start in
+  let write_copy lines =
+    let dir = Core_unix.mkdtemp (Filename.temp_dir_name ^/ "market-recorder-bench") in
+    let raw = Raw_writer.create ~data_dir:dir ~on_closed:ignore () in
+    List.iter lines ~f:(function
+      | Market_data.Raw_minute.Line.Frame { recv_ts; payload } ->
+        Raw_writer.write raw ~venue:Binance ~stream:Bbo ~symbol:"BTCUSDT" ~recv_ts payload
+      | Disconnect -> ());
+    let%map () = Raw_writer.close raw in
+    dir
+  in
+  let%bind a_dir = write_copy a in
+  let%bind b_dir = write_copy b in
+  let out_dir = Core_unix.mkdtemp (Filename.temp_dir_name ^/ "market-recorder-bench") in
+  let%map report, files =
+    timed (fun () -> Raw_merge.run ~a_dir ~b_dir ~out_dir (Date.of_string "2026-10-12"))
+  in
+  let report = Or_error.ok_exn report in
+  printf
+    "merge of two copies: %d lines in, %d only_a, %d only_b, %d both\n"
+    count
+    counts.only_a
+    counts.only_b
+    counts.both;
+  assert (Raw_merge.Counts.equal report.total { counts with minutes = 1 });
+  printf "  merge in memory  %s\n" (rate ~count ~bytes in_memory);
+  printf "  merge files      %s\n" (rate ~count ~bytes files)
+;;
+
 let run ~per_second =
   let frames = frames ~per_second in
   let count = List.length frames in
@@ -93,7 +154,7 @@ let run ~per_second =
       List.iter events ~f:(Norm_writer.append norm);
       Norm_writer.close norm)
   in
-  let%map zst =
+  let%bind zst =
     Sys.ls_dir (dir ^/ "raw/binance/bbo/BTCUSDT/2026/10/12")
     >>= Deferred.List.map ~how:`Sequential ~f:(fun f ->
       Unix.stat (dir ^/ "raw/binance/bbo/BTCUSDT/2026/10/12" ^/ f) >>| Unix.Stats.size)
@@ -109,7 +170,8 @@ let run ~per_second =
   printf "  normalize        %s\n" (rate ~count ~bytes normalize);
   printf "  raw write + zstd %s\n" (rate ~count ~bytes raw);
   printf "  event log write  %s\n" (rate ~count ~bytes norm);
-  printf "  all three        %s\n" (rate ~count ~bytes total)
+  printf "  all three        %s\n" (rate ~count ~bytes total);
+  merge ~frames ~bytes
 ;;
 
 let () =
