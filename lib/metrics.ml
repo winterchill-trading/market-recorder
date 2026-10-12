@@ -48,10 +48,12 @@ type t =
   ; mutable upload_source : (unit -> int * int * int) option
   ; mutable feed_stats_sources : (Market_data.Venue.t * (unit -> Feed_stats.t)) list
   ; mutable flush_error_source : unit -> (Error.t * Time_ns.t) option
+  ; mutable lags : (Market_data.Venue.t * Time_ns.Span.t) list (** sorted by venue *)
   }
 
 let create ?(now = Time_ns.now) () =
   { now
+  ; lags = []
   ; counters = Hashtbl.create (module Key)
   ; upload_source = None
   ; feed_stats_sources = []
@@ -99,6 +101,14 @@ let event t key =
 
 let set_pipe_length t key f = (get t key).pipe_length <- f
 let set_upload_source t f = t.upload_source <- Some f
+
+let exchange_lag t ~venue lag =
+  t.lags
+  <- List.Assoc.add t.lags venue lag ~equal:Market_data.Venue.equal
+     |> List.sort ~compare:(fun (a, _) (b, _) -> Market_data.Venue.compare a b)
+;;
+
+let exchange_lags t = t.lags
 let set_flush_error_source t f = t.flush_error_source <- f
 
 let add_feed_stats_source t ~venue f =
@@ -283,6 +293,22 @@ let render t =
     "market_recorder_reconnects_total"
     ~help:"Successful websocket reconnections of the venue clients."
     (fun (s : Feed_stats.t) -> s.reconnects);
+  if not (List.is_empty t.lags)
+  then (
+    let name = "market_recorder_exchange_lag_seconds" in
+    bprintf
+      buf
+      "# HELP %s recv_ts - exch_ts of the venue's latest event with an exchange time.\n\
+       # TYPE %s gauge\n"
+      name
+      name;
+    List.iter t.lags ~f:(fun (venue, lag) ->
+      bprintf
+        buf
+        "%s{venue=\"%s\"} %.6f\n"
+        name
+        (Market_data.Venue.to_string venue)
+        (Time_ns.Span.to_sec lag)));
   Option.iter t.upload_source ~f:(fun f ->
     let uploaded, failures, pending = f () in
     let scalar name ~type_ ~help v =

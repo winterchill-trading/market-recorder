@@ -41,6 +41,13 @@ val event : t -> Key.t -> unit
 (** Where the [norm_pipe_length] gauge of a stream reads its pipe length from. *)
 val set_pipe_length : t -> Key.t -> (unit -> int) -> unit
 
+(** Records [recv_ts - exch_ts] of a venue's latest event, rendered as
+    [market_recorder_exchange_lag_seconds{venue}] (negative when the venue's clock is
+    ahead of ours). *)
+val exchange_lag : t -> venue:Market_data.Venue.t -> Time_ns.Span.t -> unit
+
+val exchange_lags : t -> (Market_data.Venue.t * Time_ns.Span.t) list
+
 (** Uploader gauges, read when rendering. *)
 val set_upload_source : t -> (unit -> int * int * int) -> unit
 

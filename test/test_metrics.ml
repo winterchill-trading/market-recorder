@@ -248,3 +248,27 @@ let%expect_test "a stream recorded under another one only counts events" =
     |}];
   return ()
 ;;
+
+let%expect_test "latest exchange lag per venue" =
+  let t = Metrics.create () in
+  let lines () =
+    Metrics.render t
+    |> String.split_lines
+    |> List.filter ~f:(String.is_substring ~substring:"exchange_lag")
+    |> List.iter ~f:print_endline
+  in
+  lines ();
+  [%expect {| |}];
+  Metrics.exchange_lag t ~venue:Bybit (Time_ns.Span.of_int_ms 40);
+  Metrics.exchange_lag t ~venue:Binance (Time_ns.Span.of_int_ms 12);
+  Metrics.exchange_lag t ~venue:Bybit (Time_ns.Span.of_int_ms (-3));
+  lines ();
+  [%expect
+    {|
+    # HELP market_recorder_exchange_lag_seconds recv_ts - exch_ts of the venue's latest event with an exchange time.
+    # TYPE market_recorder_exchange_lag_seconds gauge
+    market_recorder_exchange_lag_seconds{venue="binance"} 0.012000
+    market_recorder_exchange_lag_seconds{venue="bybit"} -0.003000
+    |}];
+  return ()
+;;

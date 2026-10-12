@@ -257,7 +257,18 @@ let start ?collector (config : Config.t) =
               ~streams:(entry.streams : Market_data.Stream.t list)];
         ( feed
         , Norm_writer.consume norm feed ~on_event:(fun event ->
-            Metrics.event metrics (key (Market_data.Event.stream event))) )))
+            let stream = Market_data.Event.stream event in
+            Metrics.event metrics (key stream);
+            (* funding carries no exchange time on some venues *)
+            match stream with
+            | Funding -> ()
+            | Trades | Bbo | L2 | Private ->
+              Metrics.exchange_lag
+                metrics
+                ~venue:entry.venue
+                (Time_ns.diff
+                   (Market_data.Event.recv_ts event)
+                   (Market_data.Event.exch_ts event))) )))
   in
   { data_dir
   ; raw
