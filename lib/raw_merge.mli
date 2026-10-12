@@ -75,7 +75,12 @@ module Findings : sig
     }
   [@@deriving sexp_of]
 
-  type t = { seq : seq option (** for streams with a venue sequence *) }
+  type t =
+    { seq : seq option (** for streams with a venue sequence *)
+    ; median_interval : Time_ns.Span.t option (** between merged frames, see {!Silence} *)
+    ; suspected : Silence.Gap.t list
+    (** silences longer than [silence] in the merged output of a stream that ticks *)
+    }
   [@@deriving sexp_of]
 end
 
@@ -93,13 +98,16 @@ module Report : sig
 end
 
 val default_window : Time_ns.Span.t
+val default_silence : Time_ns.Span.t
 
 (** Merges every raw minute file of the UTC [date] under [<a_dir>/raw] and [<b_dir>/raw]
     into [<out_dir>/raw] with {!Raw_writer} (compressed minute files), and writes the
-    report to [<out_dir>/_merge/<date>.json]. Fails without writing if [out_dir] already
-    holds raw files of [date]. *)
+    report to [<out_dir>/_merge/<date>.json] (counts, sequence gaps, suspected gaps from
+    silences longer than [silence], default 10s). Fails without writing if [out_dir]
+    already holds raw files of [date]. *)
 val run
   :  ?window:Time_ns.Span.t
+  -> ?silence:Time_ns.Span.t
   -> a_dir:string
   -> b_dir:string
   -> out_dir:string

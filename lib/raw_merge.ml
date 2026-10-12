@@ -265,7 +265,12 @@ module Findings = struct
     }
   [@@deriving sexp_of]
 
-  type t = { seq : seq option } [@@deriving sexp_of]
+  type t =
+    { seq : seq option
+    ; median_interval : Time_ns.Span.t option
+    ; suspected : Silence.Gap.t list
+    }
+  [@@deriving sexp_of]
 end
 
 module Report = struct
@@ -306,7 +311,19 @@ module Report = struct
 
   let ts time = quote (Raw_writer.format_ts time)
 
+  let silence_fields (f : Findings.t) =
+    sprintf
+      {|, "median_interval_ms": %s, "suspected_gaps": [%s]|}
+      (Option.value_map f.median_interval ~default:"null" ~f:(fun span ->
+         sprintf "%.3f" (Time_ns.Span.to_ms span)))
+      (List.map f.suspected ~f:(fun (g : Silence.Gap.t) ->
+         sprintf {|{"from": %s, "until": %s}|} (ts g.from) (ts g.until))
+       |> String.concat ~sep:", ")
+  ;;
+
   let findings_fields (f : Findings.t) =
+    silence_fields f
+    ^
     match f.seq with
     | None -> ""
     | Some seq ->
@@ -355,6 +372,7 @@ module Report = struct
 end
 
 let default_window = Time_ns.Span.of_sec 5.
+let default_silence = Time_ns.Span.of_sec 10.
 
 let read_copy files =
   Deferred.Or_error.List.concat_map
@@ -365,7 +383,18 @@ let read_copy files =
       |> Deferred.Or_error.tag_s ~tag:[%message "reading raw minute file" ~path:f.path])
 ;;
 
-let run ?(window = default_window) ~a_dir ~b_dir ~out_dir date =
+let run
+  ?(window = default_window)
+  ?(silence = default_silence)
+  ~a_dir
+  ~b_dir
+  ~out_dir
+  date
+  =
+  let day_start =
+    Time_ns.of_date_ofday ~zone:Time_float.Zone.utc date Time_ns.Ofday.start_of_day
+  in
+  let day_stop = Time_ns.add day_start Time_ns.Span.day in
   let%bind existing = Raw_minute.files ~data_dir:out_dir date in
   if not (List.is_empty existing)
   then
@@ -410,6 +439,7 @@ let run ?(window = default_window) ~a_dir ~b_dir ~out_dir date =
               , Seq_gaps.create ~reorder:window () )
           else None
         in
+        let quiet = Silence.create ~threshold:silence ~start:day_start () in
         let track tracker lines =
           List.iter lines ~f:(fun (line : Line.t) ->
             match line with
@@ -440,6 +470,10 @@ let run ?(window = default_window) ~a_dir ~b_dir ~out_dir date =
               let lines, counts, carry =
                 merge_minute ~identity ~window ~minute carry ~a ~b
               in
+              List.iter lines ~f:(fun (line : Line.t) ->
+                match line with
+                | Disconnect -> ()
+                | Frame { recv_ts; _ } -> Silence.add quiet recv_ts);
               Option.iter trackers ~f:(fun (merged, ta, tb) ->
                 track merged lines;
                 Option.iter a ~f:(track ta);
@@ -464,8 +498,11 @@ let run ?(window = default_window) ~a_dir ~b_dir ~out_dir date =
               let%map () = Raw_writer.roll writer in
               Ok (carry, Counts.(total + counts)))
         in
+        Silence.finish quiet ~stop:day_stop;
         let findings =
-          { Findings.seq =
+          { Findings.median_interval = Silence.median_interval quiet
+          ; suspected = Silence.suspected quiet
+          ; seq =
               Option.map trackers ~f:(fun (merged, ta, tb) ->
                 List.iter [ merged; ta; tb ] ~f:Seq_gaps.flush;
                 { Findings.gaps = Seq_gaps.gaps merged
@@ -525,8 +562,17 @@ let command =
          "-window"
          (optional_with_default default_window Time_ns.Span.arg_type)
          ~doc:"SPAN largest recv_ts difference of one frame's two copies (default 5s)"
+     and silence =
+       flag
+         "-silence"
+         (optional_with_default default_silence Time_ns.Span.arg_type)
+         ~doc:
+           "SPAN a longer stretch without frames on a ticking stream is a suspected gap \
+            (default 10s)"
      in
      fun () ->
-       let%map.Deferred.Or_error report = run ~window ~a_dir ~b_dir ~out_dir date in
+       let%map.Deferred.Or_error report =
+         run ~window ~silence ~a_dir ~b_dir ~out_dir date
+       in
        Core.print_s [%sexp (report.total : Counts.t)])
 ;;
