@@ -163,6 +163,76 @@ last minute is the empty disconnect line written at shutdown. The Hyperliquid si
 does not serve `activeAssetCtx`, so the example config records no Hyperliquid funding
 (a stream that never delivers would keep `/healthz` at 503).
 
+## End to end against the real venues
+
+`scripts/e2e-mainnet.sh [seconds]` records the eight venues on mainnet with
+[`examples/mainnet-all.sexp`](examples/mainnet-all.sexp) (one BTC market per venue, the
+perpetual where there is one; upload command copying to
+`/tmp/market-recorder-mainnet/remote`), queries `/healthz` and `/metrics` on port 9920,
+sends `SIGTERM` and lists the files. It needs network access:
+
+```
+DUNE_BUILD_DIR=../_build-market-recorder scripts/e2e-mainnet.sh 90
+```
+
+Feeds are opened one after another, so the first frames of the last venue arrive about
+20s after start (here 13:34:44 to 13:35:05 UTC). Excerpts of a 90s run on 2026-10-12:
+
+```
+== /healthz
+ok
+200
+== /metrics
+market_recorder_frames_total{venue="hyperliquid",stream="funding",symbol="BTC"} 87
+market_recorder_frames_total{venue="binance",stream="bbo",symbol="BTCUSDT"} 93530
+market_recorder_frames_total{venue="bybit",stream="l2",symbol="BTCUSDT"} 3789
+market_recorder_frames_total{venue="okx",stream="trades",symbol="BTC-USDT-SWAP"} 3200
+market_recorder_frames_total{venue="okx",stream="funding",symbol="BTC-USDT-SWAP"} 840
+market_recorder_frames_total{venue="coinbase",stream="l2",symbol="BTC-USD"} 1155
+market_recorder_frames_total{venue="kraken",stream="l2",symbol="PF_XBTUSD"} 7060
+market_recorder_frames_total{venue="kraken",stream="funding",symbol="PF_XBTUSD"} 255
+market_recorder_frames_total{venue="deribit",stream="bbo",symbol="BTC-PERPETUAL"} 1338
+market_recorder_frames_total{venue="deribit",stream="funding",symbol="BTC-PERPETUAL"} 209
+market_recorder_frames_total{venue="bitget",stream="trades",symbol="BTCUSDT"} 843
+market_recorder_frames_total{venue="bitget",stream="l2",symbol="BTCUSDT"} 706
+market_recorder_bytes_total{venue="coinbase",stream="l2",symbol="BTC-USD"} 10046925
+market_recorder_events_total{venue="okx",stream="funding",symbol="BTC-USDT-SWAP"} 695
+market_recorder_events_total{venue="kraken",stream="trades",symbol="PF_XBTUSD"} 268
+market_recorder_events_total{venue="deribit",stream="trades",symbol="BTC-PERPETUAL"} 988
+market_recorder_last_frame_age_seconds{venue="okx",stream="funding",symbol="BTC-USDT-SWAP"} 0.126
+market_recorder_last_frame_age_seconds{venue="coinbase",stream="trades",symbol="BTC-USD"} 0.306
+market_recorder_last_frame_age_seconds{venue="kraken",stream="funding",symbol="PF_XBTUSD"} 0.011
+market_recorder_last_frame_age_seconds{venue="deribit",stream="trades",symbol="BTC-PERPETUAL"} 0.733
+market_recorder_last_frame_age_seconds{venue="bitget",stream="bbo",symbol="BTCUSDT"} 0.067
+market_recorder_uploads_total 57
+market_recorder_upload_failures_total 0
+market_recorder_upload_pending 0
+== recorder exit 0
+== files
+./coinbase/BTC-USD/norm/l2/2026-10-12.bin
+./kraken/BTC/USD/norm/l2/2026-10-12.bin
+./kraken/PF_XBTUSD/norm/funding/2026-10-12.bin
+./okx/BTC-USDT-SWAP/norm/funding/2026-10-12.bin
+./raw/bitget/l2/BTCUSDT/2026/10/12/13-35.ndjson.zst
+./raw/bitget/l2/BTCUSDT/2026/10/12/13-36.ndjson.zst
+./raw/coinbase/trades/BTC-USD/2026/10/12/13-34.ndjson.zst
+./raw/deribit/funding/BTC-PERPETUAL/2026/10/12/13-35.ndjson.zst
+./raw/deribit/l2/BTC-PERPETUAL/2026/10/12/13-36.ndjson.zst
+./raw/kraken/funding/PF_XBTUSD/2026/10/12/13-35.ndjson.zst
+./raw/okx/trades/BTC-USDT-SWAP/2026/10/12/13-34.ndjson.zst
+...
+```
+
+All 31 venue/stream pairs had a frame in the last second; every venue produced minute
+files (8 to 12 per venue over three minutes, 88 in all), each copied to the remote
+directory. The first OKX trades line is its subscription ack:
+`2026-10-12T13:34:50.358325Z {"event":"subscribe","arg":{"channel":"trades","instId":"BTC-USDT-SWAP"},"connId":"7a4bb6b7"}`.
+
+Raw files are kept under the configured symbol, but normalized events carry the symbol
+the venue sends: Kraken's spot streams for `PF_XBTUSD` come from `BTC/USD`, which the
+event log stores under `kraken/BTC/USD/` (one directory level per `/`), while its funding
+stays under `kraken/PF_XBTUSD/`.
+
 ## Modules
 
 | Module | |
