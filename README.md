@@ -522,22 +522,48 @@ its funding stays under `kraken/PF_XBTUSD/`.
 frames (30% `aggTrade`, the rest `bookTicker`, a `markPrice` every 1000 frames, about
 170 bytes each), runs it through the Binance feed normalizer, the raw minute writer
 (including the zstd roll on close) and the event log writer, and prints each stage's
-rate. On an M-series Mac, dev profile, single core:
+rate. It then times the recorder's per-frame path alone (`Recorder.Frame_sink.on_raw`:
+clamp, counters, raw line into an open minute file) and counts its minor words. On an
+M-series Mac, release profile, single core:
 
 ```
 one minute at 2000 frames/s: 120000 frames, 20.7 MB raw, 120000 events, 0.9 MB compressed
-  normalize          427536 frames/s     73.8 MB/s  (280.7ms)
-  raw write + zstd   777333 frames/s    134.2 MB/s  (154.4ms)
-  event log write   6276479 frames/s   1083.3 MB/s  (19.1ms)
-  all three          264218 frames/s     45.6 MB/s  (454.2ms)
-one minute at 10000 frames/s: 600000 frames, 104.2 MB raw, 600000 events, 4.0 MB compressed
-  all three          249757 frames/s     43.4 MB/s  (2.4s)
+  normalize         2264023 frames/s    390.8 MB/s  (53ms)
+  raw write + zstd  1059949 frames/s    182.9 MB/s  (113.2ms)
+  event log write   5923878 frames/s   1022.5 MB/s  (20.3ms)
+  all three          643525 frames/s    111.1 MB/s  (186.5ms)
+  on_raw            2475654 frames/s    427.3 MB/s  (48.5ms)  0.0 words/frame
 ```
 
-So one core handles about 250k frames/s (45 MB/s) end to end; JSON decoding in the
-normalizer is about 60% of the cost. The busiest
-mainnet stream in the 90s run above (Binance `BTCUSDT` bbo, about 1000 frames/s) uses
-under 0.5% of that.
+So one core handles about 600k frames/s (110 MB/s) end to end, up from about 250k
+before the normalizer's scanner and the per-frame changes below. The busiest mainnet
+stream in the 90s run above (Binance `BTCUSDT` bbo, about 1000 frames/s) uses under 0.2%
+of that.
+
+### Per-frame path
+
+`on_raw` used to build a `Metrics.Key` per frame and hash it three times (clamp, the
+seen set, the counters), store `last_frame` as an option, format the timestamp with
+`sprintf`, join the line with `String.concat` and hash a second key to find the minute
+file. Now `Frame_sink` resolves each stream's counters (`Metrics.Handle`) and minute
+file slot (`Raw_writer.Handle`) on the stream's first frame, `last_frame` is
+`Time_ns.t or_null`, and the line is written straight into the file's buffer with the
+timestamp from a reused buffer whose `YYYY-MM-DDTHH:MM:` prefix changes once a minute.
+Best of five alternating runs, same machine and siblings, before and after:
+
+| Stage | Build | Before | After |
+| --- | --- | ---: | ---: |
+| `on_raw` | dev | 832 ns, 186.5 words | 383 ns, 0 words |
+| `on_raw` | release | 795 ns, 186.5 words | 380 ns, 0 words |
+| `on_raw` | release `-O3` | 843 ns, 182.5 words | 378 ns, 0 words |
+| raw write + zstd | release | 1307 ns | 902 ns |
+| all three stages | release | 1879 ns | 1508 ns |
+
+Words are exact and pinned in `test/test_frame_sink.ml` and `test/test_raw_line.ml`
+(measured on arm64; CI runs amd64). What remains is copying the line into the file's
+buffer and that buffer's growth. `test/test_raw_line.ml` checks the written files
+against the old `sprintf` and `String.concat` builder over random times (before the
+epoch included) and frames with newlines.
 
 The same bench then merges two copies of the minute (copy B 300 us later, each missing a
 different 1% of the frames), in memory and from compressed files to compressed files:
