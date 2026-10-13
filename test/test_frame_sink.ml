@@ -33,6 +33,6 @@ let%expect_test "words per frame through on_raw" =
   done;
   let words = Gc.minor_words () - before in
   printf "%.1f words per frame\n" (Float.of_int words /. Float.of_int n);
-  [%expect {| 175.7 words per frame |}];
+  [%expect {| 20.5 words per frame |}];
   Raw_writer.close raw
 ;;

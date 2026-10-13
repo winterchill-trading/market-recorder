@@ -57,6 +57,26 @@ val disconnect
   -> recv_ts:Time_ns.t
   -> unit
 
+(** One stream's minute files, looked up once (when a feed subscribes) so that writing a
+    frame does not hash the venue, stream and symbol. *)
+module Handle : sig
+  type t
+end
+
+val handle
+  :  t
+  -> venue:Market_data.Venue.t
+  -> stream:Market_data.Stream.t
+  -> symbol:string
+  -> Handle.t
+
+(** {!write} through a handle. Once the minute's file is open the only allocation is the
+    line's bytes in the file's buffer. *)
+val write_handle : t -> Handle.t -> recv_ts:Time_ns.t -> string -> unit
+
+(** {!disconnect} through a handle. *)
+val disconnect_handle : t -> Handle.t -> recv_ts:Time_ns.t -> unit
+
 (** Hands all buffered lines to the OS. *)
 val flush : t -> unit Deferred.t
 
