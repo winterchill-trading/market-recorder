@@ -123,6 +123,54 @@ let merge ~frames ~bytes =
   printf "  merge files      %s\n" (rate ~count ~bytes files)
 ;;
 
+(* The recorder's per-frame path ([Recorder.Frame_sink.on_raw]: clamp, counters, raw line)
+   into an open Raw_writer, without the zstd roll. Words are minor words per frame and
+   exact; frames/s depends on the machine. *)
+let on_raw frames =
+  let stream_of frame : Market_data.Stream.t =
+    if String.is_substring frame ~substring:"aggTrade"
+    then Trades
+    else if String.is_substring frame ~substring:"markPrice"
+    then Funding
+    else Bbo
+  in
+  let frames =
+    List.map frames ~f:(fun (recv_ts, frame) -> stream_of frame, recv_ts, frame)
+  in
+  (* List.split_n returns an unboxed tuple on this switch *)
+  let #(warm, frames) = List.split_n frames 10 in
+  let count = List.length frames in
+  let bytes = List.sum (module Int) frames ~f:(fun (_, _, f) -> String.length f) in
+  let dir = Core_unix.mkdtemp (Filename.temp_dir_name ^/ "market-recorder-bench") in
+  let raw = Raw_writer.create ~data_dir:dir ~on_closed:ignore () in
+  let metrics = Metrics.create () in
+  let sink =
+    Recorder.Frame_sink.create
+      ~raw
+      ~metrics
+      ~warnings:(Warnings.create ())
+      ~seen:(Hash_set.create (module Metrics.Key))
+      ~venue:Binance
+      ~symbol:"BTCUSDT"
+  in
+  let on_raw (stream, recv_ts, frame) =
+    Recorder.Frame_sink.on_raw sink ~stream ~recv_ts frame
+  in
+  (* open the three files first so the loop measures the steady state *)
+  List.iter warm ~f:on_raw;
+  let%bind () = Raw_writer.flush raw in
+  let words = Gc.minor_words () in
+  let start = Time_ns.now () in
+  List.iter frames ~f:on_raw;
+  let span = Time_ns.diff (Time_ns.now ()) start in
+  let words = Gc.minor_words () - words in
+  printf
+    "  on_raw           %s  %.1f words/frame\n"
+    (rate ~count ~bytes span)
+    (Float.of_int words /. Float.of_int count);
+  Raw_writer.close raw
+;;
+
 let run ~per_second =
   let frames = frames ~per_second in
   let count = List.length frames in
@@ -171,6 +219,7 @@ let run ~per_second =
   printf "  raw write + zstd %s\n" (rate ~count ~bytes raw);
   printf "  event log write  %s\n" (rate ~count ~bytes norm);
   printf "  all three        %s\n" (rate ~count ~bytes total);
+  let%bind () = on_raw frames in
   merge ~frames ~bytes
 ;;
 
