@@ -38,6 +38,21 @@ val clamp_recv_ts : t -> Key.t -> Time_ns.t -> Time_ns.t
 
 val event : t -> Key.t -> unit
 
+(** One stream's counters, looked up once (when a feed subscribes) so that the per-frame
+    calls do not hash a {!Key.t}. *)
+module Handle : sig
+  type t
+
+  (** {!frame} without the lookup; allocates nothing. *)
+  val frame : t -> recv_ts:Time_ns.t -> bytes:int -> unit
+
+  (** {!clamp_recv_ts} without the lookup; allocates nothing. *)
+  val clamp_recv_ts : t -> Time_ns.t -> Time_ns.t
+end
+
+(** The counters of [key], created (as {!register} with [raw = true] would) if missing. *)
+val handle : t -> Key.t -> Handle.t
+
 (** Counts a gap the venue client reported on the stream ([market_recorder_gaps_total]). *)
 val gap : t -> Key.t -> unit
 

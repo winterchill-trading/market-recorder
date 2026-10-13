@@ -21,7 +21,8 @@ module Counters = struct
     ; mutable pipe_length : unit -> int
     ; mutable stale : bool
     ; mutable flaps : int
-    ; mutable last_frame : Time_ns.t option
+    ; mutable last_frame : Time_ns.t or_null
+    (** [or_null], not [option]: setting it per frame allocates nothing *)
     }
 end
 
@@ -77,27 +78,33 @@ let get t key =
     ; pipe_length = (fun () -> 0)
     ; stale = false
     ; flaps = 0
-    ; last_frame = None
+    ; last_frame = Null
     })
 ;;
 
 let register ?(raw = true) t key = (get t key).raw <- raw
 
-let frame t key ~recv_ts ~bytes =
-  let c = get t key in
-  c.frames <- c.frames + 1;
-  c.bytes <- c.bytes + bytes;
-  c.last_frame <- Some recv_ts
-;;
+module Handle = struct
+  type t = Counters.t
 
-let clamp_recv_ts t key recv_ts =
-  let c = get t key in
-  match c.last_frame with
-  | Some last when Time_ns.( < ) recv_ts last ->
-    c.clamped <- c.clamped + 1;
-    last
-  | _ -> recv_ts
-;;
+  let frame (c : t) ~recv_ts ~bytes =
+    c.frames <- c.frames + 1;
+    c.bytes <- c.bytes + bytes;
+    c.last_frame <- This recv_ts
+  ;;
+
+  let clamp_recv_ts (c : t) recv_ts =
+    match c.last_frame with
+    | This last when Time_ns.( < ) recv_ts last ->
+      c.clamped <- c.clamped + 1;
+      last
+    | This _ | Null -> recv_ts
+  ;;
+end
+
+let handle = get
+let frame t key ~recv_ts ~bytes = Handle.frame (get t key) ~recv_ts ~bytes
+let clamp_recv_ts t key recv_ts = Handle.clamp_recv_ts (get t key) recv_ts
 
 let event t key =
   let c = get t key in
@@ -149,7 +156,12 @@ let flush_error t =
 ;;
 
 let age t (c : Counters.t) =
-  Time_ns.diff (t.now ()) (Option.value c.last_frame ~default:c.registered)
+  let last =
+    match c.last_frame with
+    | This last -> last
+    | Null -> c.registered
+  in
+  Time_ns.diff (t.now ()) last
 ;;
 
 module Health = struct

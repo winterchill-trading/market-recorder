@@ -281,3 +281,28 @@ let%expect_test "latest exchange lag per venue" =
     |}];
   return ()
 ;;
+
+let%expect_test "a handle counts like the keyed calls, without allocating" =
+  let t = Metrics.create ~now:(fun () -> time "2026-10-12T09:00:00Z") () in
+  let key : Metrics.Key.t = { venue = Okx; stream = Trades; symbol = "BTC-USDT" } in
+  let h = Metrics.handle t key in
+  let t1 = time "2026-10-12T09:00:01Z" in
+  let t0 = time "2026-10-12T09:00:00.5Z" in
+  let before = Gc.minor_words () in
+  for _ = 1 to 1000 do
+    let recv_ts = Metrics.Handle.clamp_recv_ts h t1 in
+    Metrics.Handle.frame h ~recv_ts ~bytes:10
+  done;
+  let recv_ts = Metrics.Handle.clamp_recv_ts h t0 in
+  Metrics.Handle.frame h ~recv_ts ~bytes:10;
+  let words = Gc.minor_words () - before in
+  print_s [%message (words : int) (recv_ts : Time_ns.Alternate_sexp.t)];
+  print_s [%sexp (Metrics.streams t : Metrics.Stream_status.t list)];
+  [%expect
+    {|
+    ((words 0) (recv_ts "2026-10-12 09:00:01Z"))
+    (((key ((venue Okx) (stream Trades) (symbol BTC-USDT))) (frames 1001)
+      (bytes 10010) (events 0) (clamped 1) (flaps 0) (last_frame_age -1s)))
+    |}];
+  return ()
+;;
