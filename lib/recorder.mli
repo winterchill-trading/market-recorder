@@ -53,6 +53,25 @@ val record_gaps
   -> Market_data.Gap.t Pipe.Reader.t
   -> unit Deferred.t
 
+(** The per-frame path of one feed (one venue and symbol): clamps [recv_ts] so a stream's
+    receive times never go backwards (with a warning), counts the frame and appends it to
+    the stream's raw minute file. *)
+module Frame_sink : sig
+  type t
+
+  val create
+    :  raw:Raw_writer.t
+    -> metrics:Metrics.t
+    -> warnings:Warnings.t
+    -> seen:Metrics.Key.t Hash_set.t (** streams that received a frame *)
+    -> venue:Market_data.Venue.t
+    -> symbol:string
+    -> t
+
+  (** The feed's [on_raw] callback. *)
+  val on_raw : t -> stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit
+end
+
 (** Closes the feeds, writes a disconnect line to every stream that received data,
     compresses the open minutes, closes the event logs, gives pending uploads up to 10s
     and saves the rest of the upload queue. Idempotent. *)

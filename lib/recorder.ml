@@ -191,6 +191,36 @@ let record_gaps ~raw ~metrics ~is_open ~venue ~symbol ~streams gaps =
           then Raw_writer.disconnect raw ~venue ~stream ~symbol ~recv_ts:gap.recv_ts)))
 ;;
 
+module Frame_sink = struct
+  type t =
+    { raw : Raw_writer.t
+    ; metrics : Metrics.t
+    ; warnings : Warnings.t
+    ; seen : Metrics.Key.t Hash_set.t
+    ; venue : Market_data.Venue.t
+    ; symbol : string
+    }
+
+  let create ~raw ~metrics ~warnings ~seen ~venue ~symbol =
+    { raw; metrics; warnings; seen; venue; symbol }
+  ;;
+
+  let on_raw t ~stream ~recv_ts frame =
+    let key = { Metrics.Key.venue = t.venue; stream; symbol = t.symbol } in
+    let clamped = Metrics.clamp_recv_ts t.metrics key recv_ts in
+    if not (Time_ns.equal clamped recv_ts)
+    then
+      Warnings.warn
+        t.warnings
+        key
+        [%message "recv_ts went backwards" (recv_ts : Time_ns.t) (clamped : Time_ns.t)];
+    let recv_ts = clamped in
+    Hash_set.add t.seen key;
+    Metrics.frame t.metrics key ~recv_ts ~bytes:(String.length frame);
+    Raw_writer.write t.raw ~venue:t.venue ~stream ~symbol:t.symbol ~recv_ts frame
+  ;;
+end
+
 (* Hyperliquid's [l2Book] frames feed both [L2] and [Bbo]; the client passes each one to
    [on_raw] once, under [L2] when [L2] is requested. *)
 let has_raw_frames (entry : Config.Venue_entry.t) (stream : Market_data.Stream.t) =
@@ -242,20 +272,11 @@ let start ?collector (config : Config.t) =
         let key stream = { Metrics.Key.venue = entry.venue; stream; symbol } in
         List.iter entry.streams ~f:(fun stream ->
           Metrics.register ~raw:(has_raw_frames entry stream) metrics (key stream));
+        let sink =
+          Frame_sink.create ~raw ~metrics ~warnings ~seen ~venue:entry.venue ~symbol
+        in
         let on_raw ~stream ~recv_ts frame =
-          let key = key stream in
-          let clamped = Metrics.clamp_recv_ts metrics key recv_ts in
-          if not (Time_ns.equal clamped recv_ts)
-          then
-            Warnings.warn
-              warnings
-              key
-              [%message
-                "recv_ts went backwards" (recv_ts : Time_ns.t) (clamped : Time_ns.t)];
-          let recv_ts = clamped in
-          Hash_set.add seen key;
-          Metrics.frame metrics key ~recv_ts ~bytes:(String.length frame);
-          Raw_writer.write raw ~venue:entry.venue ~stream ~symbol ~recv_ts frame
+          Frame_sink.on_raw sink ~stream ~recv_ts frame
         in
         let%map with_gaps, read_stats = open_feed entry ~symbol ~on_raw in
         Metrics.add_feed_stats_source metrics ~venue:entry.venue read_stats;
