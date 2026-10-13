@@ -192,6 +192,15 @@ let record_gaps ~raw ~metrics ~is_open ~venue ~symbol ~streams gaps =
 ;;
 
 module Frame_sink = struct
+  (* What a frame of one stream touches, looked up on the stream's first frame. *)
+  module Entry = struct
+    type t =
+      { key : Metrics.Key.t
+      ; counters : Metrics.Handle.t
+      ; file : Raw_writer.Handle.t
+      }
+  end
+
   type t =
     { raw : Raw_writer.t
     ; metrics : Metrics.t
@@ -199,25 +208,51 @@ module Frame_sink = struct
     ; seen : Metrics.Key.t Hash_set.t
     ; venue : Market_data.Venue.t
     ; symbol : string
+    ; entries : Entry.t option array (** by [index] of the stream *)
     }
 
+  let index : Market_data.Stream.t -> int = function
+    | Trades -> 0
+    | Bbo -> 1
+    | L2 -> 2
+    | Funding -> 3
+    | Private -> 4
+  ;;
+
   let create ~raw ~metrics ~warnings ~seen ~venue ~symbol =
-    { raw; metrics; warnings; seen; venue; symbol }
+    { raw; metrics; warnings; seen; venue; symbol; entries = Array.create ~len:5 None }
+  ;;
+
+  let[@inline never] resolve t stream =
+    let key = { Metrics.Key.venue = t.venue; stream; symbol = t.symbol } in
+    let entry =
+      { Entry.key
+      ; counters = Metrics.handle t.metrics key
+      ; file = Raw_writer.handle t.raw ~venue:t.venue ~stream ~symbol:t.symbol
+      }
+    in
+    Hash_set.add t.seen key;
+    t.entries.(index stream) <- Some entry;
+    entry
+  ;;
+
+  let[@inline never] warn_clamped t (entry : Entry.t) ~recv_ts ~clamped =
+    Warnings.warn
+      t.warnings
+      entry.key
+      [%message "recv_ts went backwards" (recv_ts : Time_ns.t) (clamped : Time_ns.t)]
   ;;
 
   let on_raw t ~stream ~recv_ts frame =
-    let key = { Metrics.Key.venue = t.venue; stream; symbol = t.symbol } in
-    let clamped = Metrics.clamp_recv_ts t.metrics key recv_ts in
-    if not (Time_ns.equal clamped recv_ts)
-    then
-      Warnings.warn
-        t.warnings
-        key
-        [%message "recv_ts went backwards" (recv_ts : Time_ns.t) (clamped : Time_ns.t)];
-    let recv_ts = clamped in
-    Hash_set.add t.seen key;
-    Metrics.frame t.metrics key ~recv_ts ~bytes:(String.length frame);
-    Raw_writer.write t.raw ~venue:t.venue ~stream ~symbol:t.symbol ~recv_ts frame
+    let entry =
+      match t.entries.(index stream) with
+      | Some entry -> entry
+      | None -> resolve t stream
+    in
+    let clamped = Metrics.Handle.clamp_recv_ts entry.counters recv_ts in
+    if not (Time_ns.equal clamped recv_ts) then warn_clamped t entry ~recv_ts ~clamped;
+    Metrics.Handle.frame entry.counters ~recv_ts:clamped ~bytes:(String.length frame);
+    Raw_writer.write_handle t.raw entry.file ~recv_ts:clamped frame
   ;;
 end
 
